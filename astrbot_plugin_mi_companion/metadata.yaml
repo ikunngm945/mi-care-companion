@@ -1,0 +1,6 @@
+name: astrbot_plugin_mi_companion
+display_name: 小米设备关怀助手
+desc: 独立认证事件接口，持久化去重，先调用模型再向白名单会话发送提醒。
+version: v1.0.0
+author: Mi Companion
+astrbot_version: '>=4.5.7'

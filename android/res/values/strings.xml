@@ -1,0 +1,2 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources><string name="app_name">小米关怀助手</string><string-array name="xposed_scope"><item>com.miui.weather2</item><item>com.mi.health</item></string-array></resources>

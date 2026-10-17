@@ -1,0 +1,31 @@
+{
+  "api_key": {
+    "description": "插件独立随机 API key",
+    "type": "string",
+    "default": "",
+    "hint": "至少 32 字符，勿复用 AstrBot 管理 API 密钥。为空时服务不启动。用 python -c 'import secrets; print(secrets.token_urlsafe(32))' 生成。"
+  },
+  "listen_host": {
+    "description": "监听地址",
+    "type": "string",
+    "default": "127.0.0.1",
+    "hint": "默认仅本机，通过 HTTPS 反向代理对外暴露。不要直接向公网开放 HTTP。"
+  },
+  "listen_port": {
+    "description": "监听端口",
+    "type": "int",
+    "default": 8765
+  },
+  "allowed_umos": {
+    "description": "允许投递的 UMO 白名单",
+    "type": "list",
+    "default": [],
+    "hint": "必须至少配置一个；在目标机器人会话发送 /sid 获取完整字符串，例如 botid:FriendMessage:123。严格精确匹配。"
+  },
+  "provider_id": {
+    "description": "模型提供商 ID（留空使用目标会话默认模型）",
+    "type": "string",
+    "default": "",
+    "hint": "填写 AstrBot 已配置的文本模型 provider ID，不是模型 API key；请求方不能覆盖。"
+  }
+}
