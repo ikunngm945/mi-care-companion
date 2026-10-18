@@ -24,7 +24,8 @@ final class HealthCycle {
  static JSONObject collect(HealthSource.Reader db,long now,TimeZone zone)throws Exception{
   try{
    long until=now/1000;
-   JSONArray rows=query(db,"sleep_segment","isComplete=1 AND key='sleep'",until-14*DAY,until,64);
+   // Native sleep reads include isComplete=0; use payload bounds, not this source flag, to validate ended sleep.
+   JSONArray rows=query(db,"sleep_segment","key='sleep'",until-14*DAY,until,64);
    TreeMap<Long,JSONObject> sleeps=new TreeMap<>();
    for(int i=0;i<rows.length();i++){
     JSONObject v=parse(rows.getJSONObject(i));long a=integer(v,"bedtime"),b=integer(v,"wake_up_time"),duration=integer(v,"duration");
