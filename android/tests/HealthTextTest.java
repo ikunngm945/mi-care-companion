@@ -50,6 +50,19 @@ public final class HealthTextTest {
    has(facts,"\n活动卡路里：56.5千卡\n");has(facts,"\n步数：1234步\n");has(facts,"\n中高强度活动：7分钟\n");has(facts,"\n运动次数：0次\n");
    no(facts,"1767225600000");no(facts,"1767312000000");no(facts,"自然日");
   });
+  check("current sleep totals while other days stay summary-only",()->{
+   JSONObject c=cycle();
+   JSONArray stages=new JSONArray()
+    .put(o("{\"start_ms\":1767276000000,\"end_ms\":1767279600000,\"state\":3,\"heart_rate\":{\"min\":60,\"max\":61},\"spo2\":{\"min\":98,\"max\":99}}"))
+    .put(o("{\"start_ms\":1767279600000,\"end_ms\":1767283200000,\"state\":2,\"heart_rate\":{\"min\":58,\"max\":60},\"spo2\":{\"min\":97,\"max\":98}}"))
+    .put(o("{\"start_ms\":1767283200000,\"end_ms\":1767286800000,\"state\":4,\"heart_rate\":{\"min\":62,\"max\":66},\"spo2\":{\"min\":96,\"max\":99}}"))
+    .put(o("{\"start_ms\":1767286800000,\"end_ms\":1767288600000,\"state\":5,\"heart_rate\":{\"min\":65,\"max\":70},\"spo2\":{\"min\":98,\"max\":99}}"))
+    .put(o("{\"start_ms\":1767288600000,\"end_ms\":1767290400000,\"state\":3,\"heart_rate\":{\"min\":61,\"max\":63},\"spo2\":{\"min\":98,\"max\":99}}"));
+   c.put("sleep",new JSONArray().put(new JSONObject().put("start_ms",1767276000000L).put("end_ms",1767290400000L).put("stages",stages)));
+   String facts=render(health(c),null);
+   has(facts,"当次睡眠总时长：3小时30分钟；清醒：30分钟；快速眼动：1小时；浅睡：1小时30分钟；深睡：1小时");
+   has(facts,"其余睡眠摘要");
+  });
   // Breaks caught: only first/last segment rendered, dedup of equal-valued intervals.
   check("all measured segments and singleton ranges",()->{
    JSONObject c=cycle();JSONArray many=new JSONArray();
@@ -57,6 +70,7 @@ public final class HealthTextTest {
    c.put("heart_rate",many).put("stress",new JSONArray().put(range("2026-01-01T01:00:00Z","2026-01-01T01:30:00Z",20,30))).put("spo2",new JSONArray().put(range("2026-01-01T02:00:00Z","2026-01-01T02:30:00Z",98,98)));
    String facts=render(health(c),null);
    for(int i=0;i<30;i++)has(facts,(70+i)+"次/分");has(facts,"2026-01-01 08:29 ～ 2026-01-01 08:30");
+   has(facts,"心率全周期：70～99次/分");has(facts,"压力全周期：20～30");has(facts,"血氧全周期：98%");
    has(facts,"20～30");has(facts,"98%");no(facts,"98～98");no(facts,"70～70");has(facts,"实测散点");has(facts,"半小时");
   });
   // Breaks caught: inferred sleep-state names and silently omitted missing stage vitals.
@@ -110,6 +124,20 @@ public final class HealthTextTest {
    JSONObject c=cycle().put("timezone","America/New_York").put("start_ms",ms("2026-03-07T13:00:00Z")).put("end_ms",ms("2026-03-08T12:00:00Z"));
    has(render(health(c),null),"2026-03-07 08:00 ～ 2026-03-08 08:00");
    c.put("timezone","INJECT_ZONE");has(render(health(c),screen()),"健康读取区间：暂无数据");no(render(health(c),null),"INJECT_ZONE");
+  });
+  check("weekly activity, current/other sleep and today's workout",()->{
+   JSONObject h=health(cycle());JSONObject f=h.getJSONObject("fields");
+   f.put("week_activity",o("{\"status\":\"ok\",\"start_date\":\"2026-10-18\",\"end_date\":\"2026-10-24\",\"days\":7,\"days_detail\":[{\"date\":\"2026-10-18\",\"steps\":4769,\"activity_kcal\":522,\"moderate_vigorous_minutes\":16},{\"date\":\"2026-10-19\",\"steps\":10122,\"activity_kcal\":889,\"moderate_vigorous_minutes\":53,\"exercise_duration_seconds\":322,\"exercise_count\":1}]}"));
+   f.put("today_workouts",new JSONArray().put(o("{\"start_ms\":1792810728000,\"sport_name\":\"户外跑步\",\"distance_m\":221,\"duration_seconds\":188,\"activity_kcal\":12,\"total_kcal\":16,\"avg_pace_seconds_per_km\":850,\"avg_bpm\":125,\"max_bpm\":158,\"steps\":286,\"avg_cadence\":111,\"max_cadence\":204,\"avg_stride_cm\":82}")));
+   f.put("sleep_week",new JSONArray().put(o("{\"date\":\"2026-10-23\",\"bedtime_epoch_seconds\":1792704300,\"wake_up_epoch_seconds\":1792707540,\"total_minutes\":334,\"awake_minutes\":26,\"rem_minutes\":77,\"light_minutes\":143,\"deep_minutes\":114}")));
+   String facts=render(h,null);
+   has(facts,"近7天每日活动（2026-10-18 ～ 2026-10-24；按天列出，不合计）：");
+   has(facts,"2026-10-18：步数 4769步；活动卡路里 522千卡；活动时长 16分钟");
+   has(facts,"2026-10-19：步数 10122步；活动卡路里 889千卡；活动时长 53分钟；运动 5分钟22秒（1次）");
+   no(facts,"本周活动");no(facts,"54683");
+   has(facts,"今日运动（2026-10-24）：");has(facts,"10:58 户外跑步：距离：221米；时长：3分钟8秒；活动卡路里：12千卡（总16千卡）；平均配速：14'10\"");
+   has(facts,"平均心率：125次/分");has(facts,"最大心率：158次/分");has(facts,"步数：286步");has(facts,"平均步频：111步/分");has(facts,"平均步幅：82厘米");
+   has(facts,"其余睡眠摘要");has(facts,"2026-10-23 05:25 ～ 2026-10-23 06:19；总睡眠：5小时34分钟");has(facts,"深睡：1小时54分钟");
   });
   // Breaks caught: partial or invalid measurements suppress later valid segments.
   check("invalid segments do not remove later valid data",()->{

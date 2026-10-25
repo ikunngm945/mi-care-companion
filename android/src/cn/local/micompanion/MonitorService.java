@@ -11,6 +11,10 @@ import java.util.UUID;
 import java.util.concurrent.*;
 
 public final class MonitorService extends Service {
+ public static final String ACTION_RELOAD_LINK="cn.local.micompanion.action.RELOAD_LINK";
+ public static final String ACTION_REFRESH="cn.local.micompanion.action.REFRESH";
+ private static volatile LinkServer link;
+ private static volatile boolean serviceRunning;
  private final Handler h=new Handler(Looper.getMainLooper());
  private final ExecutorService net=Executors.newSingleThreadExecutor();
  private TriggerState state;
@@ -19,9 +23,22 @@ public final class MonitorService extends Service {
  private int boot;
  private long offStart=-1,lastRetry=-1;
  private boolean uploading;
+ private boolean hourlyRefreshing;
+ public static LinkServer current(){return link;}
+ public static boolean serviceRunning(){return serviceRunning;}
  public static String status(Context c){
   SharedPreferences settings=c.getSharedPreferences("monitor",0);String error=settings.getString("error","");
-  return settings.getString("status","监控未启动")+(error.isEmpty()?"":"\n最近自动事件提示："+error);
+  String linkError=settings.getString("link_error","");
+  String pullError=settings.getString("pull_error","");
+  String hourly=settings.getString("hourly_status","");
+  return settings.getString("status","监控未启动")+(error.isEmpty()?"":"\n最近自动事件提示："+error)
+   +(linkError.isEmpty()?"":"\n数据连接："+linkError)
+   +(pullError.isEmpty()?"":"\n自动拉起："+pullError)
+   +(hourly.isEmpty()?"":"\n每小时同步："+hourly);
+ }
+ public static void refresh(Context c){
+  if(current()==null)return;
+  try{c.startForegroundService(new Intent(c,MonitorService.class).setAction(ACTION_REFRESH));}catch(RuntimeException ignored){}
  }
  private boolean on(){return ((PowerManager)getSystemService(POWER_SERVICE)).isInteractive();}
  private boolean unlocked(){return !((KeyguardManager)getSystemService(KEYGUARD_SERVICE)).isKeyguardLocked();}
@@ -55,6 +72,10 @@ public final class MonitorService extends Service {
  }
  private void sample() {
   long now=SystemClock.elapsedRealtime(),wall=System.currentTimeMillis();boolean active=on(),open=unlocked();
+  if(link!=null){
+   if(link.status("weather").connected)p.edit().putBoolean("seen_weather",true).apply();
+   if(link.status("health").connected)p.edit().putBoolean("seen_health",true).apply();
+  }
   if(active!=wasOn){
    if(active){
     if(offStart>=0)p.edit().putLong("off_duration_ms",now-offStart).putLong("off_ended_wall",System.currentTimeMillis()).apply();
@@ -81,6 +102,23 @@ public final class MonitorService extends Service {
     }
   }
   checkpoint(state,now,wall,active,open).commit();
+  long lastHourly=p.getLong("last_hourly_wall",0);
+  if(lastHourly<=0)p.edit().putLong("last_hourly_wall",wall).apply();
+  else if(PendingAutomatic.hourlyDue(lastHourly,wall)&&!hourlyRefreshing){
+   // Refresh the local snapshots only. Automatic sending still uses the original long-idle trigger.
+   if(p.edit().putLong("last_hourly_wall",wall).commit()){
+    hourlyRefreshing=true;final long hourlyAt=wall;
+    net.execute(()->{
+     try{
+      boolean synced=TargetRecovery.ensureForSend(MonitorService.this,link,60_000);
+      p.edit().putString("hourly_status",synced?"每小时数据已同步到本机（未发送）":"每小时同步失败，保留上一次数据")
+       .putLong("hourly_at",hourlyAt).apply();
+     }catch(Exception e){
+      p.edit().putString("hourly_status","每小时同步失败："+e.getClass().getSimpleName()).putLong("hourly_at",hourlyAt).apply();
+     }finally{h.post(()->hourlyRefreshing=false);}
+    });
+   }
+  }
   p.edit().putString("status",(active?(open?"已解锁亮屏":"亮屏锁定"):"息屏")+" · "+(state.isArmed()?"待触发，连续使用 "+(state.useMillis(now)/1000)+" 秒":"等待连续息屏超过3小时")).apply();
   boolean expired=false;
    if(!uploading&&!p.getString("pending_auto","").isEmpty()&&PendingAutomatic.expired(p.getLong("pending_created_wall",-1),wall)){
@@ -98,27 +136,66 @@ public final class MonitorService extends Service {
  }
  private final Runnable tick=new Runnable(){public void run(){if(p.getBoolean("enabled",false)){sample();h.postDelayed(this,2000);}}};
  private final BroadcastReceiver screen=new BroadcastReceiver(){public void onReceive(Context c,Intent i){sample();}};
+ private void updateNotification(){
+  Notification.Builder n=new Notification.Builder(this,"monitor")
+   .setSmallIcon(android.R.drawable.ic_menu_info_details)
+   .setContentTitle("小米关怀助手")
+   .setContentText(notificationText())
+   .setContentIntent(PendingIntent.getActivity(this,0,new Intent(this,MainActivity.class),PendingIntent.FLAG_IMMUTABLE))
+   .setOngoing(true).setOnlyAlertOnce(true);
+  if(Build.VERSION.SDK_INT>=34)startForeground(1,n.build(),ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);else startForeground(1,n.build());
+ }
+ private String notificationText(){
+  String error=p.getString("link_error","");
+  if(!error.isEmpty())return "数据连接错误："+error;
+  return p.getBoolean("enabled",false)?"监控中 · 数据接收中":"数据接收中（自动监控未启用）";
+ }
+ private void startLink(){
+  if(link!=null)link.stop();
+  link=null;
+  try{
+   SettingsStore.Config cfg=SettingsStore.ensureLink(this);
+   LinkServer server=new LinkServer(cfg.port,cfg.token,(kind,snapshot)->SnapshotStore.put(this,kind,snapshot));
+   if(server.start()){link=server;p.edit().remove("link_error").apply();}
+   else p.edit().putString("link_error",server.error()).apply();
+  }catch(Exception ex){
+   p.edit().putString("link_error","本机配置读取失败："+ex.getClass().getSimpleName()).apply();
+  }
+  updateNotification();
+ }
+ private void reloadLink(){
+  startLink();
+ }
  @Override public void onCreate(){
-  super.onCreate();p=getSharedPreferences("monitor",0);
+  super.onCreate();serviceRunning=true;p=getSharedPreferences("monitor",0);
   NotificationManager nm=getSystemService(NotificationManager.class);nm.createNotificationChannel(new NotificationChannel("monitor","屏幕监控",NotificationManager.IMPORTANCE_LOW));
-  PendingIntent click=PendingIntent.getActivity(this,0,new Intent(this,MainActivity.class),PendingIntent.FLAG_IMMUTABLE);
-  Notification n=new Notification.Builder(this,"monitor").setSmallIcon(android.R.drawable.ic_menu_info_details).setContentTitle("小米关怀助手监控中").setContentText("长息屏后解锁持续使用才上报；点此设置或停止").setContentIntent(click).setOngoing(true).build();
-  if(Build.VERSION.SDK_INT>=34)startForeground(1,n,ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);else startForeground(1,n);
+  updateNotification();
+  startLink();
   state=TriggerState.decode(p.getString("state",""));
   boot=bootCount();restore(SystemClock.elapsedRealtime(),System.currentTimeMillis(),on(),unlocked());
   IntentFilter f=new IntentFilter();f.addAction(Intent.ACTION_SCREEN_OFF);f.addAction(Intent.ACTION_SCREEN_ON);f.addAction(Intent.ACTION_USER_PRESENT);
   if(Build.VERSION.SDK_INT>=33)registerReceiver(screen,f,Context.RECEIVER_NOT_EXPORTED);else registerReceiver(screen,f);
   h.post(tick);
  }
- @Override public int onStartCommand(Intent i,int flags,int id){return START_STICKY;}
+ @Override public int onStartCommand(Intent i,int flags,int id){
+  if(i!=null&&ACTION_RELOAD_LINK.equals(i.getAction()))reloadLink();
+  else if(i!=null&&ACTION_REFRESH.equals(i.getAction()))updateNotification();
+  else if(link==null)startLink();
+  return START_STICKY;
+ }
  @Override public void onDestroy(){
-  h.removeCallbacksAndMessages(null);unregisterReceiver(screen);
+  h.removeCallbacksAndMessages(null);unregisterReceiver(screen);serviceRunning=false;
+  if(link!=null){link.stop();link=null;}
   if(!p.getBoolean("enabled",false)){state.restart();p.edit().putString("state",state.encode()).remove("boot").remove("last_elapsed").remove("last_wall").commit();}
   // A system stop keeps the last observed checkpoint for evidence-based same-boot recovery.
   net.shutdown();super.onDestroy();
  }
  @Override public IBinder onBind(Intent i){return null;}
  public static final class Boot extends BroadcastReceiver {
-  @Override public void onReceive(Context c,Intent i){if(c.getSharedPreferences("monitor",0).getBoolean("enabled",false))try{c.startForegroundService(new Intent(c,MonitorService.class));}catch(RuntimeException ex){c.getSharedPreferences("monitor",0).edit().putString("status","系统限制自启动，请打开应用恢复监控").apply();}}
+  @Override public void onReceive(Context c,Intent i){
+   SharedPreferences p=c.getSharedPreferences("monitor",0);
+   if(p.getBoolean("service_enabled",false))try{c.startForegroundService(new Intent(c,MonitorService.class));}
+   catch(RuntimeException ex){p.edit().putString("status","系统限制自启动，请打开应用恢复数据连接").apply();}
+  }
  }
 }

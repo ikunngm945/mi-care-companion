@@ -303,8 +303,10 @@ public final class OfficialApiTest {
             });
             test("send rejects empty and oversized text before network", () -> {
                 int before = calls.size();
-                for (String invalid : new String[]{"", " \n\t　", repeated('x', 501), repeated('x', 16001)}) safe(rejected(() -> OfficialApi.send(cfg, invalid)));
+                for (String invalid : new String[]{"", " \n\t　", repeated('x', 16001)}) safe(rejected(() -> OfficialApi.send(cfg, invalid)));
                 equal(before, calls.size());
+                OfficialApi.send(cfg, repeated('x', 501));
+                equal(before + 1, calls.size());
             });
             if (serverFailure.get() != null) failures.add("HTTP fixture error: " + serverFailure.get());
         } finally { server.stop(0); }

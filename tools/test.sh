@@ -3,8 +3,14 @@ set -euo pipefail
 ROOT="$(realpath "$(dirname "$0")/..")"
 cd "$ROOT"
 mkdir -p build/test
-javac --release 8 -cp tools/deps/android.jar:tools/deps/xposed-api.jar -d build/test android/src/cn/local/micompanion/*.java
-javac --release 8 -cp build/test:tools/deps/json.jar:tools/deps/android.jar -d build/test android/tests/*Test.java
+SOURCE_DIRS=(
+ android/src/cn/local/micompanion
+ android/hook-common/cn/local/micompanion/hook
+)
+SOURCES=()
+for dir in "${SOURCE_DIRS[@]}"; do for file in "$dir"/*.java; do SOURCES+=("$file"); done; done
+javac --release 8 -encoding UTF-8 -cp tools/deps/android.jar:tools/deps/json.jar:tools/deps/shizuku-api.jar:tools/deps/shizuku-aidl.jar -d build/test "${SOURCES[@]}"
+javac --release 8 -encoding UTF-8 -cp build/test:tools/deps/json.jar:tools/deps/android.jar -d build/test android/tests/*Test.java
 for file in android/tests/*Test.java; do
  test="$(basename "$file" .java)"
  TZ=Asia/Shanghai java -ea -cp build/test:tools/deps/json.jar:tools/deps/android.jar "cn.local.micompanion.$test"

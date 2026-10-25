@@ -40,6 +40,8 @@
 
 ### 3.2 活动总数：不能替换为日报或stand
 
+> 0.7.0 另起“一周活动”展示，明确从 `daily_report` 的 `STEP` / `CALORIE` / `MH_STRENGTH` 按本地日逐天列出近 7 天，不做合计，并和当天 `sport_report` 分开；它不是把本节的周期活动换成日报。周期活动仍按 3.2 的明细规则计算，两者字段和含义不同。
+
 | 输出 | 明细与固定算法 | 缺失/冲突 |
 |---|---|---|
 | `calories_kcal` | 0.6.4：`calorie_record`，`key='calories'`，先裁切`(start,end]`，同来源同时间去重，各来源按当地半小时累计，逐槽取大再求和；`BigDecimal`保留小数，不照搬原生日报的每槽roundToInt，不除1000 | 无明细/未知来源/坏值/冲突/超限为null |
@@ -53,7 +55,7 @@
 
 - [EventClient](<../../android/src/cn/local/micompanion/EventClient.java>)先冻结健康类别，再取其有效周期采集屏幕；[ReadOnlyProbe](<../../android/device-tests/ReadOnlyProbe.java>)使用同口径。没有周期、未来/非法区间或超过7天时，不查询自然日兜底。
 - [UsageCollector](<../../android/src/cn/local/micompanion/UsageCollector.java>)和[UsageTimeline](<../../android/src/cn/local/micompanion/UsageTimeline.java>)将UsageEvents积分裁切至相同起止，输出亮屏、解锁使用时长及前台时长top10。仅前查一日建立状态；未知初态不补造，缺事件会低估，并非系统数字健康全天精确统计。事件乱序或超过100000条则失败，不返回部分结果。
-- [HealthText](<../../android/src/cn/local/micompanion/HealthText.java>)开头写一次本地读取区间，活动各一行，当前主睡眠所有阶段和全周期有效桶逐项显示；缺失明确“暂无数据”。屏幕起止不能与健康精确核对则“未知”。不给模型源epoch、账号、sid/did、自由文本或未核实元数据。
+- [HealthText](<../../android/src/cn/local/micompanion/HealthText.java>)开头写一次本地读取区间；0.7.0 先列一周活动（来自日报）和当天运动，再列当前主睡眠的全部阶段及汇总、其余近 7 天睡眠摘要，最后列全周期有效桶。缺失明确“暂无数据”，源缺少睡眠分期时写“分期时长：暂无数据”。屏幕起止不能与健康精确核对则“未知”。不给模型源epoch、账号、sid/did、自由文本或未核实元数据。
 - [OfficialApi](<../../android/src/cn/local/micompanion/OfficialApi.java>)按 `WeatherText.snapshot` → `HealthText.snapshot` → `AdvicePrompt.message` 生成内存视图：0.5.0天气固定格式器仍使用；原输入、本机冻结任务不改写。固定整理不调用AI，只有随后官方chat生成建议的一次调用，没有额外AI预处理。
 - 官方路由、人格匹配、prompt/Key保存、自动trigger规则及uncertain send（`delivery_unknown`不重发）均不变。图标在后续 0.6.1 版本更新，与周期算法无关。
 
@@ -65,6 +67,7 @@
 | 周期 | 7天；超过则不可用，不回退自然日 |
 | 每指标/活动明细查询 | 12000条 + 1 sentinel；超限相应指标/总数未知，不截断累加 |
 | 当前主睡眠阶段 | 512；超限周期失败，不裁掉后续阶段 |
+| 一周活动/睡眠 | 日报各类型最多 28 行；睡眠日报 14 行、每日最多 32 段（超出不补造）；运动报告最多 201 行、投影最多 50 条 |
 | 周期JSON | 160 KiB UTF-8；超限周期失败 |
 | 健康类别/Provider单类别 | 各256 KiB UTF-8；超限拒绝/安全失败 |
 | 完整事件 | 256 KiB UTF-8；超限停止，不发送、不截断事实 |

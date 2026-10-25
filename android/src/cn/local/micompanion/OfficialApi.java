@@ -104,7 +104,6 @@ public final class OfficialApi {
     /** A successful adapter return is not a delivery/read receipt. The caller owns uncertain-send state. */
     public static void send(SettingsStore.Config cfg, String text) throws Exception {
         boundedText(text);
-        if(text.codePointCount(0,text.length())>500)throw tooLong();
         jsonRequest(cfg, "POST", "/im/messages", new JSONObject().put("umo", cfg.umo).put("message", text));
     }
 

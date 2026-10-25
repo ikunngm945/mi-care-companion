@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="cn.local.micompanion" android:versionCode="11" android:versionName="0.6.5">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="cn.local.micompanion" android:versionCode="12" android:versionName="0.7.0">
  <uses-sdk android:minSdkVersion="28" android:targetSdkVersion="36"/>
  <uses-permission android:name="android.permission.INTERNET"/>
  <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
@@ -8,19 +8,17 @@
  <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
  <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
- <queries><package android:name="com.miui.weather2"/><package android:name="com.mi.health"/></queries>
+ <uses-permission android:name="moe.shizuku.manager.permission.API_V23"/>
+ <queries><package android:name="moe.shizuku.privileged.api"/></queries>
  <application android:label="小米关怀助手" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:allowBackup="false" android:usesCleartextTraffic="true" android:supportsRtl="true" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher">
-  <meta-data android:name="xposedmodule" android:value="true"/>
-  <meta-data android:name="xposeddescription" android:value="只读采集小米天气和运动健康，长息屏后解锁使用再向用户配置的AstrBot上报"/>
-  <meta-data android:name="xposedminversion" android:value="82"/>
-  <meta-data android:name="xposedscope" android:resource="@array/xposed_scope"/>
   <activity android:name=".MainActivity" android:exported="true" android:configChanges="orientation|screenSize">
    <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
   </activity>
-  <provider android:name=".SnapshotProvider" android:authorities="cn.local.micompanion.snapshots" android:exported="true"/>
   <service android:name=".MonitorService" android:exported="false" android:foregroundServiceType="specialUse">
-   <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-enabled screen idle and unlocked-use monitoring for personal wellbeing; ongoing notification and stop control"/>
+   <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-enabled screen idle and unlocked-use monitoring plus loopback snapshot reception for personal wellbeing; ongoing notification and stop control"/>
   </service>
+  <provider android:name="rikka.shizuku.ShizukuProvider" android:authorities="cn.local.micompanion.shizuku" android:multiprocess="false" android:enabled="true" android:exported="true" android:permission="android.permission.INTERACT_ACROSS_USERS_FULL"/>
+  <meta-data android:name="moe.shizuku.client.V3_SUPPORT" android:value="true"/>
   <receiver android:name=".MonitorService$Boot" android:exported="false"><intent-filter><action android:name="android.intent.action.BOOT_COMPLETED"/></intent-filter></receiver>
  </application>
 </manifest>

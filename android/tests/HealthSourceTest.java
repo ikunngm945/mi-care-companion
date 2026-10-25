@@ -102,7 +102,7 @@ public final class HealthSourceTest {
    JSONObject large=HealthSource.collect(empty,longCycle,new JSONObject(),end*1000,TimeZone.getTimeZone("UTC"));
    check(large.toString().getBytes("UTF-8").length>65536,"full-stage fixture exceeds legacy source budget");
    check(large.getJSONObject("fields").getJSONObject("cycle").getJSONArray("sleep").getJSONObject(0).getJSONArray("stages").length()==512,"source retains all valid stages above 64KiB");
-   SnapshotProvider.validateSize(large.toString());
+   SnapshotStore.validateSize(large.toString());
    check(EventClient.normalizeCategory(large,"com.mi.health",end*1000).getJSONObject("fields").getJSONObject("cycle").getJSONArray("sleep").getJSONObject(0).getJSONArray("stages").length()==512,"source-provider-client pipeline never truncates stages");
    System.out.println("HealthSource: "+checks+" checks passed");
  }

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+ <string name="module_name">小米关怀助手 · 天气模块</string>
+ <string-array name="xposed_scope"><item>com.miui.weather2</item></string-array>
+</resources>

@@ -9,4 +9,7 @@ public final class PendingAutomatic {
  public static boolean retryDue(long lastAttemptElapsed,long nowElapsed){
   return lastAttemptElapsed<0||nowElapsed-lastAttemptElapsed>=60_000L;
  }
+ public static boolean hourlyDue(long lastWall,long nowWall){
+  return lastWall>0&&nowWall-lastWall>=3_600_000L;
+ }
 }

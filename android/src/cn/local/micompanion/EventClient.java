@@ -82,10 +82,42 @@ public final class EventClient {
                     if (p.contains("pending_" + name)) trigger.put(name, p.getLong("pending_" + name, 0));
                 if (now - created > 60000) trigger.put("collection_note", "事件在原触发时刻形成，配置恢复后才采集；各数据类别保留实际采集时间");
             }
-            body.put("weather", collect(c, "weather", now));
-            JSONObject health = collect(c, "health", now);
+            JSONObject weather = null, health = null, screen = null;
+            JSONObject previous = null;
+            boolean ready = true;
+            if (!manual) {
+                ready = TargetRecovery.ensureForSend(c, MonitorService.current(), 60_000);
+                if (!ready) previous = previousEvent(db, now);
+            }
+            if (previous != null) {
+                weather = previous.optJSONObject("weather");
+                health = previous.optJSONObject("health");
+                screen = previous.optJSONObject("screen");
+                if (weather == null || health == null || screen == null) previous = null;
+            }
+            if (previous == null) {
+                weather = collect(c, "weather", now);
+                health = collect(c, "health", now);
+                screen = collectScreen(c, health, now);
+                if (!manual && (!usable(weather) || !usable(health))) previous = previousEvent(db, now);
+            }
+            JSONObject trigger = body.getJSONObject("trigger");
+            if (previous != null) {
+                weather = previous.optJSONObject("weather");
+                health = previous.optJSONObject("health");
+                screen = previous.optJSONObject("screen");
+                long previousAt = previous.optLong("_previous_created", now);
+                trigger.put("data_fallback", "previous_event")
+                        .put("data_fallback_event_id", previous.optString("event_id", ""))
+                        .put("data_fallback_age_ms", Math.max(0, now - previousAt))
+                        .put("collection_note", "发送前模块无法连接或没有新数据，使用上一次事件的数据");
+            } else if (!manual && !ready) {
+                trigger.put("data_fallback", "unavailable")
+                        .put("collection_note", "发送前模块无法连接，且没有可用的上一次数据");
+            }
+            body.put("weather", weather);
             body.put("health", health);
-            body.put("screen", collectScreen(c, health, now));
+            body.put("screen", screen);
             String snapshot = snapshot(body);
             ContentValues values = new ContentValues();
             values.put("id", id); values.put("created", created); values.put("base", cfg.baseUrl);
@@ -96,6 +128,30 @@ public final class EventClient {
             process(c, db, cfg, id, true);
         }
     }
+    private static boolean usable(JSONObject category) {
+        if (category == null) return false;
+        String status = category.optString("status", "");
+        return "ok".equals(status) || "stale".equals(status);
+    }
+
+    private static JSONObject previousEvent(SQLiteDatabase db, long now) {
+        JSONObject previous = previousEvent(db, now, now - 50 * 60_000L);
+        return previous != null ? previous : previousEvent(db, now, Long.MAX_VALUE);
+    }
+
+    private static JSONObject previousEvent(SQLiteDatabase db, long now, long cutoff) {
+        try (Cursor row = db.rawQuery(
+                "SELECT created, payload FROM events WHERE payload IS NOT NULL AND created<=? " +
+                        "ORDER BY created DESC LIMIT 1", new String[]{Long.toString(cutoff)})) {
+            if (!row.moveToFirst()) return null;
+            JSONObject previous = new JSONObject(row.getString(1));
+            previous.put("_previous_created", row.getLong(0));
+            return previous;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     static String snapshot(JSONObject body) {
         String snapshot = body.toString();
         if (snapshot.getBytes(StandardCharsets.UTF_8).length > 256 * 1024)
@@ -124,7 +180,7 @@ public final class EventClient {
     public static JSONObject collect(Context c, String kind, long now) {
         if ("screen".equals(kind)) return collectScreen(c, null, now);
         String pkg = "weather".equals(kind) ? "com.miui.weather2" : "health".equals(kind) ? "com.mi.health" : "android";
-        try { return normalizeCategory(SnapshotProvider.read(c, kind), pkg, now); }
+        try { return normalizeCategory(SnapshotStore.read(c, kind), pkg, now); }
         catch (Exception e) { return collectionError(pkg, now, e); }
     }
     static long[] screenBounds(JSONObject health, long now) {

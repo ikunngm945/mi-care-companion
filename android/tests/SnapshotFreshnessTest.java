@@ -83,16 +83,16 @@ public class SnapshotFreshnessTest {
  }
  private static void sourceCollectionTime(long now)throws Exception{
   JSONObject health=cycleHealth(now,120001).put("collected_at","2026-10-16T23:57:59.999Z");
-  SnapshotProvider.refreshSnapshot(health,"health",now);
+  SnapshotStore.refreshSnapshot(health,"health",now);
   check("2026-10-16T23:57:59.999Z".equals(health.getString("collected_at")),"health cache read preserves real collection timestamp");
   check("stale".equals(health.getJSONObject("fields").getJSONObject("cycle").getString("status")),"receiver refresh ages original end using read-time now");
   JSONObject legacy=new JSONObject("{\"status\":\"ok\",\"fields\":{},\"collected_at\":\"2026-10-16T00:00:00Z\"}");
-  SnapshotProvider.refreshSnapshot(legacy,"health",now);
+  SnapshotStore.refreshSnapshot(legacy,"health",now);
   check("2026-10-16T00:00:00Z".equals(legacy.getString("collected_at")),"legacy health source collection time also remains unchanged");
-  JSONObject missing=new JSONObject("{\"status\":\"missing\",\"fields\":{}}");SnapshotProvider.refreshSnapshot(missing,"health",now);
+  JSONObject missing=new JSONObject("{\"status\":\"missing\",\"fields\":{}}");SnapshotStore.refreshSnapshot(missing,"health",now);
   check(!missing.has("collected_at"),"health collection timestamp must not be synthesized");
   JSONObject weather=new JSONObject("{\"status\":\"ok\",\"fields\":{},\"collected_at\":\"2026-10-16T00:00:00Z\"}");
-  SnapshotProvider.refreshSnapshot(weather,"weather",now);
+  SnapshotStore.refreshSnapshot(weather,"weather",now);
   check(UsageCollector.iso(now).equals(weather.getString("collected_at")),"weather receiver collection-time compatibility remains unchanged");
  }
  public static void main(String[] a)throws Exception{

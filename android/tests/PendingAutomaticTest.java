@@ -14,6 +14,9 @@ public final class PendingAutomaticTest {
   check(!invoke("retryDue",0,2000),"pending UUID must not bypass one-minute gate");
   check(!invoke("retryDue",0,59999),"one-minute boundary not yet reached");
   check(invoke("retryDue",0,60000),"one-minute retry becomes due");
-  System.out.println("PendingAutomatic: 8 checks passed");
+  check(!PendingAutomatic.hourlyDue(0,3_600_000L),"unset hourly baseline does not send immediately");
+  check(!PendingAutomatic.hourlyDue(1000,3_600_999L),"hourly boundary not yet reached");
+  check(PendingAutomatic.hourlyDue(1000,3_601_000L),"hourly send becomes due");
+  System.out.println("PendingAutomatic: 11 checks passed");
  }
 }

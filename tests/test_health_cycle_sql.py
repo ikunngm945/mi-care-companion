@@ -58,7 +58,7 @@ class SleepSqlIntegrationTest(unittest.TestCase):
         cls.classes = cls.work / "classes"
         cls.classes.mkdir()
         deps = ROOT / "tools/deps"
-        cls.cp = ":".join(map(str, [cls.classes, deps / "json.jar", deps / "android.jar", deps / "xposed-api.jar"]))
+        cls.cp = ":".join(map(str, [cls.classes, deps / "json.jar", deps / "android.jar", deps / "xposed-api.jar", deps / "shizuku-api.jar", deps / "shizuku-aidl.jar"]))
         subprocess.run(["javac", "--release", "8", "-encoding", "UTF-8", "-cp", cls.cp, "-d", str(cls.classes),
                         *map(str, sorted((ROOT / "android/src/cn/local/micompanion").glob("*.java"))),
                         str(runner)], check=True, capture_output=True)

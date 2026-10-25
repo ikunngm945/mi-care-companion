@@ -54,7 +54,7 @@ public final class RouteApiTest {
     int beforeInvalid=posts.get();boolean invalid=false;
     try{OfficialApi.generate(custom,"bad-weather","{\"weather\":{},\"weather\":{\"fields\":{}}}");}catch(Exception expected){invalid=true;}
     eq(true,invalid);eq(beforeInvalid,posts.get());
-   if(limited.codePointCount(0,limited.length())>500)throw new AssertionError("generated body exceeded 500 codepoints");
+   if(limited.codePointCount(0,limited.length())!=600)throw new AssertionError("generated body was truncated at the old 500-character cap");
    if(!message.contains("使用自定义称呼"))throw new AssertionError("custom prompt lost");
    for(String bad:new String[]{"{\"status\":\"ok\",\"data\":{}}","{\"status\":\"ok\",\"data\":{\"routing\":{\"default_1905318781:*:*\":\"deleted\"}}}","{\"status\":\"ok\",\"data\":{\"routing\":{\"*:*:*\":\"target-profile\",\"default_1905318781:*:*\":\"default\"}}}"}){
     route.set(bad);int before=posts.get();boolean rejected=false;

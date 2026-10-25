@@ -119,6 +119,174 @@ public final class HealthSource {
    JSONObject goal=HealthProjection.goals(value(row),at,s.now,s.zone);if(!goal.optBoolean("is_today")||!HealthProjection.hasMeasurement(goal)){s.missing("today_goals","missing");return;}s.fields.put("today_goals",goal);s.status("today_goals","ok");
   }catch(Exception ignored){s.missing("today_goals","error");}
  }
+
+ private static long localDayStart(long now,TimeZone zone){
+  return java.time.Instant.ofEpochMilli(now).atZone(zone.toZoneId()).toLocalDate()
+   .atStartOfDay(zone.toZoneId()).toEpochSecond();
+ }
+ private static long dayLabelStart(long now,TimeZone zone,int daysBack)throws Exception{
+  SimpleDateFormat format=new SimpleDateFormat("yyyy-MM-dd",Locale.US);format.setTimeZone(TimeZone.getTimeZone("UTC"));
+  return format.parse(HealthProjection.date(now,zone)).getTime()/1000L-daysBack*86400L;
+ }
+ private static void number(JSONObject out,JSONObject raw,String dest,String key,double lo,double hi)throws JSONException{
+  double n=raw==null?Double.NaN:raw.optDouble(key,Double.NaN);
+  if(!Double.isNaN(n)&&!Double.isInfinite(n)&&n>=lo&&n<=hi)out.put(dest,n==Math.rint(n)?(long)n:n);
+ }
+ private static JSONObject workouts(Reader db,long now,TimeZone zone)throws JSONException{
+  JSONObject out=new JSONObject().put("status","missing").put("today",new JSONArray()).put("week",new JSONArray())
+   .put("week_duration_seconds",0).put("week_count",0).put("today_count",0);
+  if(db==null)return out.put("status","error").put("reason","运动记录表不可读");
+  try{
+   long todayStart=localDayStart(now,zone),weekStart=todayStart-6*86400L,until=now/1000L+1;
+   JSONArray rows=db.query("SELECT value,time,0 AS updateTime,time,sid,key FROM sport_report WHERE isDeleted=0 AND time>=? AND time<=? ORDER BY time ASC LIMIT 201",new String[]{Long.toString(weekStart),Long.toString(until)});
+   TreeMap<String,JSONObject> unique=new TreeMap<>();int duplicate=0;
+   for(int i=0;i<rows.length();i++){
+    JSONObject row=rows.getJSONObject(i),raw=value(row);
+    long start=raw.optLong("start_time",0),end=raw.optLong("end_time",0);
+    if(start<weekStart||start>until||end<=start||end>until||end-start>7*86400L)continue;
+    long duration=raw.optLong("duration",end-start);if(duration<=0||duration>86400L)duration=end-start;
+    String key=raw.optString("key",row.optString("key",""));
+    String sport=name(key);
+    String id=start+":"+end+":"+raw.optLong("sport_type",0);
+    if(unique.containsKey(id)){duplicate++;continue;}
+    JSONObject item=new JSONObject().put("start_ms",start*1000).put("end_ms",end*1000)
+     .put("sport_name",sport).put("sport_key",key).put("duration_seconds",duration);
+    number(item,raw,"distance_m","distance",0,10000000);
+    number(item,raw,"activity_kcal","calories",0,1000000);
+    number(item,raw,"total_kcal","total_cal",0,1000000);
+    number(item,raw,"avg_pace_seconds_per_km","avg_pace",0,36000);
+    number(item,raw,"max_pace_seconds_per_km","max_pace",0,36000);
+    number(item,raw,"avg_bpm","avg_hrm",1,300);number(item,raw,"max_bpm","max_hrm",1,300);number(item,raw,"min_bpm","min_hrm",0,300);
+    number(item,raw,"steps","steps",0,1000000);number(item,raw,"avg_cadence","avg_cadence",0,300);number(item,raw,"max_cadence","max_cadence",0,300);
+    number(item,raw,"avg_stride_cm","avg_stride",0,300);number(item,raw,"max_stride_cm","max_stride",0,300);
+    number(item,raw,"avg_speed_mps","avg_speed",0,100);number(item,raw,"sport_type_code","sport_type",0,1000);
+    if(item.has("sport_type_code"))item.put("sport_type",item.remove("sport_type_code"));
+    unique.put(id,item);
+   }
+   if(unique.size()>50)return out.put("status","error").put("reason","一周运动记录超过安全上限");
+   long weekDuration=0;JSONArray week=new JSONArray(),today=new JSONArray();
+   for(JSONObject item:unique.values()){
+    week.put(item);weekDuration+=item.optLong("duration_seconds",0);
+    if(HealthProjection.date(item.getLong("start_ms"),zone).equals(HealthProjection.date(now,zone)))today.put(item);
+   }
+   out.put("status","ok").put("week",week).put("today",today).put("week_duration_seconds",weekDuration)
+    .put("week_count",week.length()).put("today_count",today.length());
+   if(duplicate>0)out.put("duplicate_projection_count",duplicate);
+   return out;
+  }catch(Exception ex){return out.put("status","error").put("reason","运动记录读取失败");}
+ }
+ private static String name(String key){
+  if("outdoor_running".equals(key))return "户外跑步";
+  if("indoor_running".equals(key))return "室内跑步";
+  if("walking".equals(key)||"outdoor_walking".equals(key))return "户外步行";
+  if("indoor_walking".equals(key))return "室内步行";
+  if("cycling".equals(key)||"outdoor_cycling".equals(key))return "户外骑行";
+  if("indoor_cycling".equals(key))return "室内骑行";
+  if("free_training".equals(key))return "自由训练";
+  if("strength_training".equals(key))return "力量训练";
+  if("swimming".equals(key))return "游泳";
+  return "运动";
+ }
+ private static JSONObject weekActivity(Reader db,JSONObject workouts,long now,TimeZone zone)throws JSONException{
+  long todayStart=localDayStart(now,zone);
+  JSONObject out=new JSONObject().put("status","missing").put("start_date",HealthProjection.date((todayStart-6*86400L)*1000L,zone))
+   .put("end_date",HealthProjection.date(now,zone)).put("days",7);
+  if(db==null)return out.put("status","error");
+  try{
+   long start=dayLabelStart(now,zone,6),end=dayLabelStart(now,zone,0)+86400;
+   String[] types={"STEP","CALORIE","MH_STRENGTH"};TreeMap<String,JSONObject> days=new TreeMap<>();
+   for(String type:types){
+    JSONArray rows=db.query("SELECT value,timeInZero,updateTime FROM daily_report WHERE dataType=? AND viewTag='days' AND isDeleted=0 AND timeInZero>=? AND timeInZero<? ORDER BY timeInZero DESC,updateTime DESC LIMIT 28",new String[]{type,Long.toString(start),Long.toString(end)});
+    HashSet<String> seen=new HashSet<>();
+    for(int i=0;i<rows.length();i++){
+     try{
+      JSONObject row=rows.getJSONObject(i);long at=row.getLong("time"),updated=row.optLong("updateTime",0);
+      String date=HealthProjection.date(at*1000L,TimeZone.getTimeZone("UTC"));
+      if(date.compareTo(HealthProjection.date((todayStart-6*86400L)*1000L,zone))<0||date.compareTo(HealthProjection.date(now,zone))>0||!seen.add(date))continue;
+      JSONObject p=HealthProjection.daily(type,value(row),at,updated,now,zone);if(!HealthProjection.hasMeasurement(p))continue;
+      JSONObject day=days.get(date);if(day==null){day=new JSONObject().put("date",date);days.put(date,day);}
+      if("STEP".equals(type)){copy(day,p,"steps","distance_m");}
+      else if("CALORIE".equals(type))copy(day,p,"activity_kcal");
+      else copy(day,p,"moderate_vigorous_minutes");
+     }catch(Exception ignored){}
+    }
+   }
+   if(workouts!=null&&workouts.optJSONArray("week")!=null){
+    JSONArray list=workouts.getJSONArray("week");
+    for(int i=0;i<list.length();i++){
+     JSONObject item=list.optJSONObject(i);if(item==null)continue;
+     long duration=item.optLong("duration_seconds",0);if(duration<=0)continue;
+     String date=HealthProjection.date(item.getLong("start_ms"),zone);JSONObject day=days.get(date);
+     if(day!=null){day.put("exercise_duration_seconds",day.optLong("exercise_duration_seconds",0)+duration);day.put("exercise_count",day.optInt("exercise_count",0)+1);}
+    }
+   }
+   JSONArray list=new JSONArray();
+   for(JSONObject day:days.values())list.put(day);
+   out.put("status","ok").put("days_with_data",list.length()).put("days_detail",list);
+   return out;
+  }catch(Exception ex){return out.put("status","error").put("reason","近7天每日活动读取失败");}
+ }
+ private static JSONArray vitalsWeek(Reader db,long now,TimeZone zone)throws JSONException{
+  JSONArray out=new JSONArray();if(db==null)return out;
+  try{
+   long start=dayLabelStart(now,zone,6),end=dayLabelStart(now,zone,0)+86400;
+   String[] types={"HR","SPO2","STRESS"};TreeMap<String,JSONObject> days=new TreeMap<>();
+   for(String type:types){
+    JSONArray rows=db.query("SELECT value,timeInZero,updateTime FROM daily_report WHERE dataType=? AND viewTag='days' AND isDeleted=0 AND timeInZero>=? AND timeInZero<? ORDER BY timeInZero DESC,updateTime DESC LIMIT 28",new String[]{type,Long.toString(start),Long.toString(end)});
+    HashSet<String> seen=new HashSet<>();
+    for(int i=0;i<rows.length();i++)try{
+     JSONObject row=rows.getJSONObject(i);long at=row.getLong("time"),updated=row.optLong("updateTime",0);
+     String date=HealthProjection.date(at*1000L,TimeZone.getTimeZone("UTC"));
+     if(date.compareTo(HealthProjection.date((dayLabelStart(now,zone,6))*1000L,zone))<0||date.compareTo(HealthProjection.date(now,zone))>0||!seen.add(date))continue;
+     JSONObject p=HealthProjection.daily(type,value(row),at,updated,now,zone);if(!HealthProjection.hasMeasurement(p))continue;
+     JSONObject day=days.get(date);if(day==null){day=new JSONObject().put("date",date);days.put(date,day);}
+     if("HR".equals(type)){copyAs(day,p,"heart_rate_avg_bpm","average_bpm");copyAs(day,p,"heart_rate_min_bpm","minimum_bpm");copyAs(day,p,"heart_rate_max_bpm","maximum_bpm");}
+     else if("SPO2".equals(type)){copyAs(day,p,"spo2_avg_percent","average_percent");copyAs(day,p,"spo2_min_percent","minimum_percent");copyAs(day,p,"spo2_max_percent","maximum_percent");}
+     else{copyAs(day,p,"stress_avg_score","average_score");copyAs(day,p,"stress_min_score","minimum_score");copyAs(day,p,"stress_max_score","maximum_score");}
+    }catch(Exception ignored){}
+   }
+   for(JSONObject day:days.values())out.put(day);
+  }catch(Exception ignored){}
+  return out;
+ }
+ private static void copyAs(JSONObject to,JSONObject from,String toKey,String fromKey)throws JSONException{if(from!=null&&from.has(fromKey))to.put(toKey,from.get(fromKey));}
+ private static JSONArray sleepWeek(Reader db,long now,TimeZone zone)throws JSONException{
+  JSONArray out=new JSONArray();if(db==null)return out;
+  try{
+   long start=dayLabelStart(now,zone,6),end=dayLabelStart(now,zone,0)+86400;
+   JSONArray rows=db.query("SELECT value,timeInZero,updateTime FROM daily_report WHERE dataType='SLEEP' AND viewTag='days' AND isDeleted=0 AND timeInZero>=? AND timeInZero<? ORDER BY timeInZero DESC,updateTime DESC LIMIT 14",new String[]{Long.toString(start),Long.toString(end)});
+   HashSet<String> seen=new HashSet<>();
+   for(int i=0;i<rows.length();i++){
+    try{
+     JSONObject row=rows.getJSONObject(i);long at=row.getLong("time");String date=HealthProjection.date(at*1000L,TimeZone.getTimeZone("UTC"));
+     if(!seen.add(date))continue;
+     JSONObject raw=value(row),day=new JSONObject().put("date",date).put("is_today",date.equals(HealthProjection.date(now,zone)));
+     JSONArray segments=raw.optJSONArray("segment_details"),details=new JSONArray();
+     long total=0,deep=0,light=0,rem=0,awake=0;boolean any=false,allStages=true,anyStages=false;long first=Long.MAX_VALUE,last=0;
+     if(segments!=null)for(int j=0;j<segments.length()&&j<32;j++){
+      JSONObject seg=segments.optJSONObject(j);if(seg==null)continue;
+      long bed=seg.optLong("bedtime",0),wake=seg.optLong("wake_up_time",0);
+      if(bed<=0||wake<=bed||wake>now/1000L+1)continue;
+      boolean hasStages=seg.has("sleep_deep_duration")&&seg.has("sleep_light_duration")
+       &&seg.has("sleep_rem_duration")&&seg.has("sleep_awake_duration");
+      long d=seg.optLong("sleep_deep_duration",0),l=seg.optLong("sleep_light_duration",0),r=seg.optLong("sleep_rem_duration",0),a=seg.optLong("sleep_awake_duration",0);
+      long t=seg.optLong("duration",0);if(t<=0||t>2880)t=d+l+r;
+      if(t<=0)continue;
+      JSONObject s=new JSONObject().put("bedtime_epoch_seconds",bed).put("wake_up_epoch_seconds",wake).put("total_minutes",t);
+      if(hasStages){s.put("deep_minutes",d).put("light_minutes",l).put("rem_minutes",r).put("awake_minutes",a);anyStages=true;deep+=d;light+=l;rem+=r;awake+=a;}
+      else allStages=false;
+      details.put(s);total+=t;any=true;first=Math.min(first,bed);last=Math.max(last,wake);
+     }
+     if(!any)continue;
+     day.put("total_minutes",total).put("bedtime_epoch_seconds",first).put("wake_up_epoch_seconds",last).put("segments",details);
+     if(anyStages&&allStages)day.put("deep_minutes",deep).put("light_minutes",light).put("rem_minutes",rem).put("awake_minutes",awake);
+     out.put(day);
+    }catch(Exception ignored){}
+   }
+  }catch(Exception ignored){}
+  return out;
+ }
+
  private static void copy(JSONObject to,JSONObject from,String... keys)throws JSONException{if(from!=null)for(String k:keys)if(from.has(k))to.put(k,from.get(k));}
  static JSONObject collect(Reader summary,Reader data,JSONObject base,long now,TimeZone zone)throws JSONException{
   Snapshot s=new Snapshot(now,zone);
@@ -144,6 +312,13 @@ public final class HealthSource {
   activity.put("activity_count",JSONObject.NULL).put("goals",s.fields.optJSONObject("today_goals")==null?JSONObject.NULL:s.fields.getJSONObject("today_goals"));
   if(measuredActivity)s.add("daily_activity",activity);else{s.fields.put("daily_activity",activity);s.status("daily_activity","missing");}
   try{s.fields.put("cycle",HealthCycle.collect(data,now,zone));}catch(Exception ignored){s.fields.put("cycle",new JSONObject().put("status","error"));}
+  JSONObject workouts=workouts(data,now,zone),week=weekActivity(summary,workouts,now,zone);
+  JSONArray sleep=sleepWeek(summary,now,zone),vitals=vitalsWeek(summary,now,zone);
+  s.fields.put("week_activity",week).put("today_workouts",workouts.optJSONArray("today")).put("sleep_week",sleep).put("daily_vitals",vitals);
+  s.status("week_activity",week.optString("status","missing"));
+  s.status("today_workouts",workouts.optString("status","missing"));
+  s.status("sleep_week",sleep.length()>0?"ok":"missing");
+  s.status("daily_vitals",vitals.length()>0?"ok":"missing");
   s.fields.put("metric_status",s.states).put("measurement_note","当天活动使用应用日报不跨来源相加；其余为各指标最新记录、不限七天；历史与报告日期和真实采样时间分别标记；缺失目标及未核实单位不猜测");
   JSONObject out=category(now).put("fields",s.fields).put("status",s.any?(s.today?"ok":"stale"):(s.errors>0?"error":"missing"))
    .put("source_updated_at",s.updated>0?iso(s.updated):JSONObject.NULL).put("reason",s.any?"只读白名单快照；单项状态见metric_status，旧记录不是今日测量":"当前账号无有效测量，或部分表不可用；详见单项状态");
