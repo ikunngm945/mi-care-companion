@@ -15,7 +15,23 @@ public final class McpServerTest {
                 .put("summary", new JSONObject().put("min", 82).put("max", 98).put("average", 90.0).put("count", 2))
                 .put("buckets", new org.json.JSONArray().put(new JSONObject().put("start", "2026-10-31T08:00:00+08:00")
                         .put("end", "2026-10-31T08:15:00+08:00").put("min", 82).put("max", 98).put("count", 2)));
-        McpServer server = new McpServer(17892, "abcdefghijklmnop", (action, date) -> data);
+        JSONObject exercise = new JSONObject().put("status", "ok").put("action", "exercise_records")
+                .put("start_date", "2026-10-31").put("end_date", "2026-10-31").put("timezone", "Asia/Shanghai")
+                .put("count", 1).put("records", new org.json.JSONArray().put(new JSONObject()
+                        .put("id", "1:482:22").put("sport", "户外跑步")
+                        .put("start", "2026-10-31T08:00:00+08:00").put("end", "2026-10-31T08:08:01+08:00")
+                        .put("duration_seconds", 481).put("distance_m", 960)
+                        .put("pace", new JSONObject().put("avg_seconds_per_km", 501).put("max_seconds_per_km", 285))
+                        .put("cadence", new JSONObject().put("avg_spm", 148).put("max_spm", 174))
+                        .put("stride", new JSONObject().put("avg_cm", 88).put("max_cm", 127))
+                        .put("heart_rate", new JSONObject().put("avg_bpm", 149).put("max_bpm", 161))
+                        .put("heart_rate_zones", new JSONObject().put("warmup_seconds", 0)
+                                .put("fat_burn_seconds", 54).put("aerobic_seconds", 408)
+                                .put("anaerobic_seconds", 0).put("extreme_seconds", 0))));
+        McpServer server = new McpServer(17892, "abcdefghijklmnop", request -> {
+            String action = request.optString("action");
+            return action.startsWith("exercise_") ? exercise : data;
+        });
         if (!server.start()) throw new AssertionError("MCP server did not start");
         try {
             check(request("", "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}").startsWith("HTTP/1.1 401"), "auth required");
@@ -24,9 +40,13 @@ public final class McpServerTest {
             check(init.contains("\"protocolVersion\":\"2024-11-05\""), "protocol version");
             String list = request("abcdefghijklmnop", "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}");
             check(list.contains("sleep_detail") && list.contains("spo2_detail"), "tools list");
+            check(list.contains("exercise_records") && list.contains("exercise_detail"), "exercise tools list");
             String call = request("abcdefghijklmnop", "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"heart_rate_detail\",\"arguments\":{\"date\":\"2026-10-31\"}}}");
             check(call.contains("08:00-08:15"), "detail text");
             check(call.contains("82-98"), "range text");
+            String exerciseCall = request("abcdefghijklmnop", "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"exercise_records\",\"arguments\":{\"start_date\":\"2026-10-31\",\"end_date\":\"2026-10-31\"}}}");
+            check(exerciseCall.contains("户外跑步") && exerciseCall.contains("ID 1:482:22"), "exercise text");
+            check(exerciseCall.contains("8'21"), "exercise pace text");
             System.out.println("McpServerTest OK");
         } finally { server.stop(); }
     }

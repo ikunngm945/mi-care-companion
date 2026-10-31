@@ -29,7 +29,7 @@ public final class McpServer {
     private static final String PROTOCOL = "2024-11-05";
     private static final String VERSION = "0.8.0";
 
-    public interface Gateway { JSONObject query(String action, String date) throws Exception; }
+    public interface Gateway { JSONObject query(JSONObject request) throws Exception; }
 
     private final int port;
     private final String token;
@@ -160,10 +160,11 @@ public final class McpServer {
         Action action = Action.of(name);
         if (action == null) throw new IllegalArgumentException("未知工具");
         JSONObject arguments = params.optJSONObject("arguments");
-        String date = arguments == null ? "" : arguments.optString("date", "");
+        JSONObject request = arguments == null ? new JSONObject() : new JSONObject(arguments.toString());
+        request.put("action", action.action);
         JSONObject result = new JSONObject();
         try {
-            JSONObject data = gateway.query(action.action, date);
+            JSONObject data = gateway.query(request);
             String text = View.render(data);
             result.put("content", new JSONArray().put(new JSONObject().put("type", "text").put("text", text)));
             result.put("isError", false);
@@ -189,14 +190,30 @@ public final class McpServer {
         STRESS_SUMMARY("stress_summary", "stress_summary", "某一天压力概括：范围、平均值、采样数"),
         STRESS_DETAIL("stress_detail", "stress_detail", "某一天压力明细：每 15 分钟的最小-最大范围"),
         SPO2_SUMMARY("spo2_summary", "spo2_summary", "某一天血氧概括：范围、平均值、采样数"),
-        SPO2_DETAIL("spo2_detail", "spo2_detail", "某一天血氧明细：每 15 分钟的最小-最大范围");
+        SPO2_DETAIL("spo2_detail", "spo2_detail", "某一天血氧明细：每 15 分钟的最小-最大范围"),
+        EXERCISE_RECORDS("exercise_records", "exercise_records", "查询某个时间段的运动记录摘要，返回运动 ID、配速、步频、步幅、心率区段"),
+        EXERCISE_DETAIL("exercise_detail", "exercise_detail", "按运动 ID 返回完整摘要、心率区段以及逐秒心率/步频/步幅/配速/距离/卡路里/步数");
         final String action, name, description;
         Action(String action, String name, String description) { this.action = action; this.name = name; this.description = description; }
         JSONObject tool() throws Exception {
-            JSONObject schema = new JSONObject().put("type", "object")
-                    .put("properties", new JSONObject().put("date", new JSONObject().put("type", "string")
-                            .put("description", "日期 YYYY-MM-DD，按 Asia/Shanghai；省略为今天")))
+            JSONObject properties = new JSONObject();
+            JSONArray required = new JSONArray();
+            if (this == EXERCISE_RECORDS) {
+                properties.put("start_date", new JSONObject().put("type", "string")
+                        .put("description", "开始日期 YYYY-MM-DD，默认今天"));
+                properties.put("end_date", new JSONObject().put("type", "string")
+                        .put("description", "结束日期 YYYY-MM-DD（含），默认与开始日期相同，最多31天"));
+            } else if (this == EXERCISE_DETAIL) {
+                properties.put("id", new JSONObject().put("type", "string")
+                        .put("description", "运动 ID：开始时间:结束时间:运动类型"));
+                required.put("id");
+            } else {
+                properties.put("date", new JSONObject().put("type", "string")
+                        .put("description", "日期 YYYY-MM-DD，按 Asia/Shanghai；省略为今天"));
+            }
+            JSONObject schema = new JSONObject().put("type", "object").put("properties", properties)
                     .put("additionalProperties", false);
+            if (required.length() > 0) schema.put("required", required);
             return new JSONObject().put("name", name).put("description", description).put("inputSchema", schema);
         }
         static Action of(String name) {
@@ -210,12 +227,122 @@ public final class McpServer {
         private View() { }
         static String render(JSONObject data) {
             if (data == null) return "没有数据";
-            if (!"ok".equals(data.optString("status"))) return data.optString("date", "") + "：" + data.optString("reason", "没有数据");
+            if (!"ok".equals(data.optString("status"))) return data.optString("date", data.optString("start_date", "")) + "：" + data.optString("reason", "没有数据");
             String action = data.optString("action", "");
             try {
                 if (action.startsWith("sleep_")) return sleep(data, action.endsWith("detail"));
+                if (action.startsWith("exercise_")) return exercise(data, action.endsWith("detail"));
                 return vitals(data);
             } catch (Exception e) { return "数据格式不完整"; }
+        }
+
+        private static String exercise(JSONObject data, boolean detail) throws Exception {
+            if (detail) {
+                StringBuilder out = new StringBuilder("运动详情（").append(data.optString("timezone")).append("）\n");
+                record(out, data);
+                JSONObject detailData = data.optJSONObject("detail");
+                if (detailData == null || !"ok".equals(detailData.optString("status"))) {
+                    out.append("逐秒明细：").append(detailData == null ? "没有数据" : detailData.optString("reason", "不可用")).append('\n');
+                    return out.toString();
+                }
+                out.append("逐秒明细：").append(detailData.optInt("sample_count")).append(" 条\n");
+                out.append("t,心率,步频,步幅,配速,距离,卡路里,步数\n");
+                JSONArray samples = detailData.optJSONArray("samples");
+                for (int i = 0; samples != null && i < samples.length(); i++) {
+                    JSONObject sample = samples.getJSONObject(i);
+                    out.append(sample.optInt("t")).append(',')
+                            .append(value(sample, "heart_rate_bpm")).append(',')
+                            .append(value(sample, "cadence_spm")).append(',')
+                            .append(value(sample, "stride_cm")).append(',')
+                            .append(paceValue(sample.opt("pace_seconds_per_km"))).append(',')
+                            .append(value(sample, "distance_m")).append(',')
+                            .append(value(sample, "calories_kcal")).append(',')
+                            .append(value(sample, "steps")).append('\n');
+                }
+                return out.toString();
+            }
+            StringBuilder out = new StringBuilder("运动记录 ").append(data.optString("start_date"))
+                    .append("～").append(data.optString("end_date")).append("（").append(data.optString("timezone")).append("）\n");
+            JSONArray records = data.optJSONArray("records");
+            if (records == null || records.length() == 0) return out.append("没有运动记录").toString();
+            out.append("共 ").append(records.length()).append(" 条\n");
+            for (int i = 0; i < records.length(); i++) {
+                out.append('[').append(i + 1).append("] ");
+                record(out, records.getJSONObject(i));
+            }
+            return out.toString();
+        }
+
+        private static void record(StringBuilder out, JSONObject record) throws Exception {
+            out.append(record.optString("sport", "运动")).append(' ')
+                    .append(stamp(record.optString("start"))).append("～").append(stamp(record.optString("end")))
+                    .append("（").append(durationSeconds(record.optLong("duration_seconds"))).append("）\n");
+            out.append("ID ").append(record.optString("id")).append('\n');
+            if (record.has("distance_m")) out.append("距离 ").append(record.optLong("distance_m")).append(" 米；");
+            if (record.has("activity_kcal")) out.append("活动 ").append(record.optLong("activity_kcal")).append(" 千卡；");
+            if (record.has("total_kcal")) out.append("总消耗 ").append(record.optLong("total_kcal")).append(" 千卡");
+            out.append('\n');
+            JSONObject pace = record.optJSONObject("pace");
+            if (pace != null && pace.has("avg_seconds_per_km")) out.append("配速 平均 ").append(pace(pace.optLong("avg_seconds_per_km")));
+            if (pace != null && pace.has("max_seconds_per_km")) out.append("，最快 ").append(pace(pace.optLong("max_seconds_per_km")));
+            if (pace != null && pace.length() > 0) out.append('\n');
+            JSONObject cadence = record.optJSONObject("cadence");
+            if (cadence != null && cadence.length() > 0) {
+                out.append("步频");
+                if (cadence.has("avg_spm")) out.append(" 平均 ").append(cadence.optInt("avg_spm"));
+                if (cadence.has("max_spm")) out.append("，最高 ").append(cadence.optInt("max_spm"));
+                out.append('\n');
+            }
+            JSONObject stride = record.optJSONObject("stride");
+            if (stride != null && stride.length() > 0) {
+                out.append("步幅");
+                if (stride.has("avg_cm")) out.append(" 平均 ").append(stride.optInt("avg_cm")).append(" cm");
+                if (stride.has("max_cm")) out.append("，最大 ").append(stride.optInt("max_cm")).append(" cm");
+                out.append('\n');
+            }
+            JSONObject heart = record.optJSONObject("heart_rate");
+            if (heart != null && heart.length() > 0) {
+                out.append("心率");
+                if (heart.has("avg_bpm")) out.append(" 平均 ").append(heart.optInt("avg_bpm"));
+                if (heart.has("max_bpm")) out.append("，最高 ").append(heart.optInt("max_bpm"));
+                out.append('\n');
+            }
+            JSONObject zones = record.optJSONObject("heart_rate_zones");
+            if (zones != null) out.append("心率区段：热身 ").append(zones.optLong("warmup_seconds"))
+                    .append("秒；燃脂 ").append(zones.optLong("fat_burn_seconds"))
+                    .append("秒；有氧 ").append(zones.optLong("aerobic_seconds"))
+                    .append("秒；无氧 ").append(zones.optLong("anaerobic_seconds"))
+                    .append("秒；极限 ").append(zones.optLong("extreme_seconds")).append("秒\n");
+        }
+
+        private static String value(JSONObject object, String key) {
+            Object value = object.opt(key);
+            return value == null || value == JSONObject.NULL ? "-" : String.valueOf(value);
+        }
+
+        private static String paceValue(Object value) {
+            if (!(value instanceof Number)) return "-";
+            return pace(((Number)value).longValue());
+        }
+
+        private static String pace(long seconds) {
+            if (seconds <= 0) return "-";
+            return (seconds / 60) + "'" + String.format(java.util.Locale.US, "%02d", seconds % 60) + "\"/km";
+        }
+
+        private static String durationSeconds(long seconds) {
+            if (seconds <= 0) return "0秒";
+            long h = seconds / 3600, m = (seconds % 3600) / 60, s = seconds % 60;
+            StringBuilder out = new StringBuilder();
+            if (h > 0) out.append(h).append("小时");
+            if (m > 0) out.append(m).append("分");
+            if (s > 0 || out.length() == 0) out.append(s).append("秒");
+            return out.toString();
+        }
+
+        private static String stamp(String iso) {
+            try { return OffsetDateTime.parse(iso).format(DateTimeFormatter.ofPattern("MM-dd HH:mm")); }
+            catch (Exception e) { return iso; }
         }
 
         private static String sleep(JSONObject data, boolean detail) throws Exception {

@@ -16,7 +16,8 @@ public final class HealthQueryService {
         SQLiteDatabase data = null;
         try {
             data = HealthSource.open(new File(dir, "fitness_data"));
-            return HealthQuery.query(HealthSource.reader(data), request, System.currentTimeMillis(), TimeZone.getDefault());
+            File fitnessRoot = new File(context.getFilesDir(), "fitness");
+            return HealthQuery.query(HealthSource.reader(data), request, System.currentTimeMillis(), TimeZone.getDefault(), fitnessRoot);
         } finally {
             if (data != null) try { data.close(); } catch (Exception ignored) { }
         }

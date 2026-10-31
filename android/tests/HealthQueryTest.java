@@ -31,6 +31,16 @@ public final class HealthQueryTest {
     private static HealthSource.Reader reader() {
         return (sql, args) -> {
             if (sql.contains("FROM sleep_segment")) return row(sleepValue().toString(), BED);
+            if (sql.contains("FROM sport_report")) {
+                long workoutStart = DAY + 8 * 3600;
+                JSONObject sport = new JSONObject().put("start_time", workoutStart).put("end_time", workoutStart + 481)
+                        .put("sport_type", 22).put("duration", 481).put("distance", 960).put("calories", 50)
+                        .put("total_cal", 61).put("avg_pace", 501).put("max_pace", 285).put("avg_cadence", 148)
+                        .put("max_cadence", 174).put("avg_stride", 88).put("avg_hrm", 149).put("max_hrm", 161)
+                        .put("steps", 1133).put("hrm_warm_up_duration", 0).put("hrm_fat_burning_duration", 54)
+                        .put("hrm_aerobic_duration", 408).put("hrm_anaerobic_duration", 0).put("hrm_extreme_duration", 0);
+                return row(sport.toString(), workoutStart);
+            }
             if (sql.contains("FROM hr_record")) {
                 return new JSONArray().put(new JSONObject().put("value", new JSONObject().put("bpm", 60).put("time", BED + 5 * 60).toString()).put("time", BED + 5 * 60))
                         .put(new JSONObject().put("value", new JSONObject().put("bpm", 65).put("time", BED + 10 * 60).toString()).put("time", BED + 10 * 60))
@@ -80,6 +90,20 @@ public final class HealthQueryTest {
         JSONObject missing = HealthQuery.query((sql, bound) -> new JSONArray(), new JSONObject().put("action", "stress_summary").put("date", "2026-10-31"),
                 (DAY + 86400) * 1000, TimeZone.getTimeZone(ZONE));
         check("missing".equals(missing.getString("status")), "missing not zero-filled");
+
+        JSONObject exercises = HealthQuery.query(reader(), new JSONObject().put("action", "exercise_records")
+                        .put("start_date", "2026-10-31").put("end_date", "2026-10-31"),
+                (DAY + 86400) * 1000, TimeZone.getTimeZone(ZONE));
+        check("ok".equals(exercises.getString("status")) && exercises.getInt("count") == 1, "exercise range");
+        JSONObject workout = exercises.getJSONArray("records").getJSONObject(0);
+        check(workout.getString("id").equals((DAY + 8 * 3600) + ":" + (DAY + 8 * 3600 + 481) + ":22"), "exercise id");
+        check(workout.getJSONObject("pace").getInt("avg_seconds_per_km") == 501, "exercise pace");
+        check(workout.getJSONObject("stride").getInt("avg_cm") == 88, "exercise stride");
+        check(workout.getJSONObject("heart_rate_zones").getInt("aerobic_seconds") == 408, "exercise zones");
+        JSONObject one = HealthQuery.query(reader(), new JSONObject().put("action", "exercise_detail")
+                        .put("id", workout.getString("id")), (DAY + 86400) * 1000, TimeZone.getTimeZone(ZONE));
+        check("ok".equals(one.getString("status")), "detail summary status");
+        check("missing".equals(one.getJSONObject("detail").getString("status")), "detail file missing is contained");
         System.out.println("HealthQueryTest OK");
     }
 

@@ -170,7 +170,7 @@ public final class MonitorService extends Service {
   }
   updateNotification();
  }
- private org.json.JSONObject queryHealth(String action,String date)throws Exception{
+ private org.json.JSONObject queryHealth(org.json.JSONObject request)throws Exception{
   LinkServer server=link;
   if(server==null)throw new IllegalStateException("本机数据连接未启动");
   if(!server.status("health").connected){
@@ -181,8 +181,6 @@ public final class MonitorService extends Service {
    }
   }
   if(!server.status("health").connected)throw new IllegalStateException("小米健康未连接；请打开健康应用后重试");
-  org.json.JSONObject request=new org.json.JSONObject().put("action",action);
-  if(date!=null&&!date.trim().isEmpty())request.put("date",date.trim());
   return server.query("health",request,20_000);
  }
  private void reloadLink(){

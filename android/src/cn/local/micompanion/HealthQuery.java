@@ -1,5 +1,6 @@
 package cn.local.micompanion;
 
+import java.io.File;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
@@ -23,11 +24,18 @@ final class HealthQuery {
     private static final int MAX_POINTS = 12000;
     private static final int MAX_SESSIONS = 64;
     private static final int MAX_SEGMENTS = 512;
+    private static final int MAX_WORKOUTS = 100;
+    private static final int MAX_EXERCISE_DAYS = 31;
     private static final String[] SLEEP_KEYS = {"items", "sleepSegments"};
 
     static JSONObject query(HealthSource.Reader db, JSONObject request, long now, TimeZone zone) throws Exception {
+        return query(db, request, now, zone, null);
+    }
+
+    static JSONObject query(HealthSource.Reader db, JSONObject request, long now, TimeZone zone, File fitnessRoot) throws Exception {
         if (db == null) throw new IllegalArgumentException("健康数据库不可用");
         String action = request.optString("action", "");
+        if (action.startsWith("exercise_")) return exercise(db, action, request, now, zone, fitnessRoot);
         LocalDate day = date(request.optString("date", ""), now, zone);
         String date = day.toString();
         ZoneId zid = zone.toZoneId();
@@ -51,6 +59,170 @@ final class HealthQuery {
     private static JSONObject missing(String action, String date, TimeZone zone, String reason) throws Exception {
         return new JSONObject().put("status", "missing").put("action", action).put("date", date)
                 .put("timezone", zone.getID()).put("reason", reason);
+    }
+
+    private static JSONObject exercise(HealthSource.Reader db, String action, JSONObject request, long now, TimeZone zone, File fitnessRoot) throws Exception {
+        if ("exercise_detail".equals(action)) return exerciseDetail(db, request, now, zone, fitnessRoot);
+        String startValue = request.optString("start_date", "").trim();
+        String endValue = request.optString("end_date", "").trim();
+        if (startValue.isEmpty() && endValue.isEmpty()) {
+            startValue = endValue = Instant.ofEpochMilli(now).atZone(zone.toZoneId()).toLocalDate().toString();
+        } else if (startValue.isEmpty()) {
+            startValue = endValue;
+        } else if (endValue.isEmpty()) {
+            endValue = startValue;
+        }
+        LocalDate from = exerciseDate(startValue, "start_date");
+        LocalDate to = exerciseDate(endValue, "end_date");
+        if (to.isBefore(from)) throw new IllegalArgumentException("end_date 不能早于 start_date");
+        if (to.toEpochDay() - from.toEpochDay() + 1 > MAX_EXERCISE_DAYS) {
+            throw new IllegalArgumentException("查询范围最多31天");
+        }
+        ZoneId zid = zone.toZoneId();
+        long start = from.atStartOfDay(zid).toEpochSecond();
+        long end = to.plusDays(1).atStartOfDay(zid).toEpochSecond();
+        if (start >= now / 1000L) {
+            return new JSONObject().put("status", "missing").put("action", action)
+                    .put("start_date", from.toString()).put("end_date", to.toString())
+                    .put("timezone", zone.getID()).put("reason", "查询日期还没有开始");
+        }
+        JSONArray rows = db.query("SELECT value,time,0 AS updateTime,time,sid,key FROM sport_report "
+                + "WHERE isDeleted=0 AND time>=? AND time<? ORDER BY time ASC LIMIT " + (MAX_WORKOUTS + 1),
+                new String[]{Long.toString(start), Long.toString(end)});
+        if (rows == null || rows.length() > MAX_WORKOUTS) throw new IllegalArgumentException("运动记录过多");
+        TreeMap<Long, JSONObject> unique = new TreeMap<>();
+        HashSet<String> seen = new HashSet<>();
+        for (int i = 0; i < rows.length(); i++) {
+            try {
+                JSONObject item = workout(rows.getJSONObject(i), zone);
+                if (item == null || !seen.add(item.getString("id"))) continue;
+                unique.put(item.getLong("start_epoch_seconds"), item);
+            } catch (Exception ignored) { }
+        }
+        JSONArray records = new JSONArray();
+        for (JSONObject item : unique.values()) records.put(item);
+        return new JSONObject().put("status", "ok").put("action", action)
+                .put("start_date", from.toString()).put("end_date", to.toString())
+                .put("timezone", zone.getID()).put("count", records.length()).put("records", records);
+    }
+
+    private static JSONObject exerciseDetail(HealthSource.Reader db, JSONObject request, long now, TimeZone zone, File fitnessRoot) throws Exception {
+        String id = request.optString("id", "").trim();
+        String[] parts = id.split(":");
+        if (parts.length != 3) throw new IllegalArgumentException("id 必须是 开始时间:结束时间:运动类型");
+        long start, end;
+        int sportType;
+        try {
+            start = Long.parseLong(parts[0]);
+            end = Long.parseLong(parts[1]);
+            sportType = Integer.parseInt(parts[2]);
+        } catch (Exception e) {
+            throw new IllegalArgumentException("id 必须是 开始时间:结束时间:运动类型");
+        }
+        if (start <= 0 || end <= start) throw new IllegalArgumentException("id 的时间范围无效");
+        JSONArray rows = db.query("SELECT value,time,0 AS updateTime,time,sid,key FROM sport_report "
+                + "WHERE isDeleted=0 AND time=? ORDER BY time ASC LIMIT 21", new String[]{Long.toString(start)});
+        JSONObject record = null;
+        String sid = null;
+        int protoType = 0;
+        for (int i = 0; rows != null && i < rows.length(); i++) {
+            try {
+                JSONObject row = rows.getJSONObject(i);
+                JSONObject item = workout(row, zone);
+                if (item != null && id.equals(item.getString("id")) && item.getLong("end_epoch_seconds") == end) {
+                    record = item;
+                    sid = row.optString("sid", "");
+                    protoType = new JSONObject(row.getString("value")).optInt("proto_type", 0);
+                    break;
+                }
+            } catch (Exception ignored) { }
+        }
+        if (record == null) {
+            return new JSONObject().put("status", "missing").put("action", "exercise_detail")
+                    .put("id", id).put("timezone", zone.getID()).put("reason", "没有找到这条运动记录");
+        }
+        JSONObject out = new JSONObject(record.toString());
+        out.put("status", "ok").put("action", "exercise_detail").put("timezone", zone.getID());
+        JSONObject detail;
+        try {
+            detail = WorkoutDetail.read(fitnessRoot, sid, start, protoType > 0 ? protoType : 22);
+        } catch (Exception e) {
+            detail = new JSONObject().put("status", "error").put("reason", "运动详情解析失败");
+        }
+        if ("ok".equals(detail.optString("status")) && detail.has("max_stride_cm") && !detail.isNull("max_stride_cm")) {
+            JSONObject stride = out.optJSONObject("stride");
+            if (stride != null) stride.put("max_cm", detail.optLong("max_stride_cm"));
+        }
+        out.put("detail", detail);
+        return out;
+    }
+
+    private static JSONObject workout(JSONObject row, TimeZone zone) throws Exception {
+        JSONObject raw = new JSONObject(row.getString("value"));
+        long start = number(raw, "start_time");
+        if (start <= 0) start = row.optLong("time");
+        long end = number(raw, "end_time");
+        if (start <= 0 || end <= start) return null;
+        long duration = number(raw, "duration");
+        if (duration <= 0 || duration > 86400) duration = end - start;
+        int sportType = (int) number(raw, "sport_type");
+        String key = raw.optString("key", row.optString("key", ""));
+        String id = start + ":" + end + ":" + sportType;
+        JSONObject out = new JSONObject().put("id", id).put("sport", sportName(key))
+                .put("sport_key", key).put("start", iso(start, zone)).put("end", iso(end, zone))
+                .put("start_epoch_seconds", start).put("end_epoch_seconds", end)
+                .put("duration_seconds", duration);
+        number(out, raw, "distance_m", "distance", 0, 10000000);
+        number(out, raw, "activity_kcal", "calories", 0, 1000000);
+        number(out, raw, "total_kcal", "total_cal", 0, 1000000);
+        number(out, raw, "steps", "steps", 0, 1000000);
+        JSONObject pace = new JSONObject();
+        number(pace, raw, "avg_seconds_per_km", "avg_pace", 0, 36000);
+        number(pace, raw, "max_seconds_per_km", "max_pace", 0, 36000);
+        JSONObject cadence = new JSONObject();
+        number(cadence, raw, "avg_spm", "avg_cadence", 0, 300);
+        number(cadence, raw, "max_spm", "max_cadence", 0, 300);
+        JSONObject stride = new JSONObject();
+        number(stride, raw, "avg_cm", "avg_stride", 0, 300);
+        if (raw.has("max_stride")) number(stride, raw, "max_cm", "max_stride", 0, 300);
+        JSONObject heart = new JSONObject();
+        number(heart, raw, "avg_bpm", "avg_hrm", 1, 300);
+        number(heart, raw, "max_bpm", "max_hrm", 1, 300);
+        JSONObject zones = new JSONObject().put("warmup_seconds", number(raw, "hrm_warm_up_duration"))
+                .put("fat_burn_seconds", number(raw, "hrm_fat_burning_duration"))
+                .put("aerobic_seconds", number(raw, "hrm_aerobic_duration"))
+                .put("anaerobic_seconds", number(raw, "hrm_anaerobic_duration"))
+                .put("extreme_seconds", number(raw, "hrm_extreme_duration"));
+        return out.put("pace", pace).put("cadence", cadence).put("stride", stride)
+                .put("heart_rate", heart).put("heart_rate_zones", zones);
+    }
+
+    private static LocalDate exerciseDate(String value, String field) {
+        try {
+            return LocalDate.parse(value, DateTimeFormatter.ISO_LOCAL_DATE);
+        } catch (Exception e) {
+            throw new IllegalArgumentException(field + " 必须是 YYYY-MM-DD");
+        }
+    }
+
+    private static void number(JSONObject out, JSONObject raw, String dest, String key, double lo, double hi) throws Exception {
+        double value = raw.optDouble(key, Double.NaN);
+        if (!Double.isNaN(value) && !Double.isInfinite(value) && value >= lo && value <= hi) {
+            out.put(dest, value == Math.rint(value) ? (long) value : value);
+        }
+    }
+
+    private static String sportName(String key) {
+        if ("outdoor_running".equals(key)) return "户外跑步";
+        if ("indoor_running".equals(key)) return "室内跑步";
+        if ("walking".equals(key) || "outdoor_walking".equals(key)) return "户外步行";
+        if ("indoor_walking".equals(key)) return "室内步行";
+        if ("cycling".equals(key) || "outdoor_cycling".equals(key)) return "户外骑行";
+        if ("indoor_cycling".equals(key)) return "室内骑行";
+        if ("free_training".equals(key)) return "自由训练";
+        if ("strength_training".equals(key)) return "力量训练";
+        if ("swimming".equals(key)) return "游泳";
+        return "运动";
     }
 
     private static JSONObject sleep(HealthSource.Reader db, String action, String date, long start, long end, TimeZone zone) throws Exception {
