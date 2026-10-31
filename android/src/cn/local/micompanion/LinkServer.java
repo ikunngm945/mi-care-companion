@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -51,6 +52,7 @@ public final class LinkServer {
     private final Object lock = new Object();
     private final Map<String, Connection> connections = new HashMap<>();
     private final Map<String, Status> statuses = new HashMap<>();
+    private final Map<String, PendingQuery> queries = new HashMap<>();
     private final AtomicBoolean running = new AtomicBoolean(false);
     private volatile ServerSocket serverSocket;
     private volatile String fatalError = "";
@@ -77,6 +79,68 @@ public final class LinkServer {
     public Status status(String kind) {
         Status status = statuses.get(kind);
         return status == null ? new Status() : status;
+    }
+
+    /** Sends a request to one module and waits for its matching query_result. */
+    public JSONObject query(String kind, JSONObject request, long timeoutMs) throws Exception {
+        Connection connection;
+        synchronized (lock) {
+            connection = connections.get(kind);
+            if (connection == null) throw new IOException("模块未连接");
+        }
+        String id = UUID.randomUUID().toString();
+        PendingQuery pending = new PendingQuery();
+        synchronized (lock) { queries.put(id, pending); }
+        try {
+            connection.send(new JSONObject().put("type", "query").put("id", id).put("query", request));
+            synchronized (pending) {
+                long deadline = System.currentTimeMillis() + Math.max(1, timeoutMs);
+                while (!pending.done) {
+                    long left = deadline - System.currentTimeMillis();
+                    if (left <= 0) break;
+                    pending.wait(left);
+                }
+            }
+            if (!pending.done) throw new IOException("模块查询超时");
+            if (pending.error != null) throw new IOException(pending.error);
+            return pending.data == null ? new JSONObject() : pending.data;
+        } finally {
+            synchronized (lock) { queries.remove(id); }
+        }
+    }
+
+    private void completeQuery(JSONObject message) {
+        String id = message.optString("id", "");
+        PendingQuery pending;
+        synchronized (lock) { pending = queries.get(id); }
+        if (pending == null) return;
+        JSONObject data = message.optJSONObject("data");
+        pending.complete(message.optBoolean("ok", false), data,
+                message.optString("reason", "模块查询失败"));
+    }
+
+    private void failQueries(String kind, String reason) {
+        ArrayList<PendingQuery> failed = new ArrayList<>();
+        synchronized (lock) {
+            for (Map.Entry<String, PendingQuery> entry : queries.entrySet()) {
+                if (kind == null || kind.equals(entry.getValue().kind)) failed.add(entry.getValue());
+            }
+        }
+        for (PendingQuery pending : failed) pending.complete(false, null, reason);
+    }
+
+    private static final class PendingQuery {
+        final String kind = "health";
+        boolean done;
+        JSONObject data;
+        String error;
+        synchronized void complete(boolean ok, JSONObject value, String message) {
+            if (done) return;
+            done = true;
+            data = ok ? value : null;
+            error = ok ? null : message;
+            notifyAll();
+        }
     }
 
     public boolean start() {
@@ -303,7 +367,12 @@ public final class LinkServer {
                     close(1007, "invalid json");
                     break;
                 }
-                if (!"snapshot".equals(message.optString("type"))) {
+                String type = message.optString("type");
+                if ("query_result".equals(type)) {
+                    completeQuery(message);
+                    continue;
+                }
+                if (!"snapshot".equals(type)) {
                     sendError("protocol", "未知消息");
                     continue;
                 }
@@ -362,6 +431,7 @@ public final class LinkServer {
                 }
             }
             closeQuietly(socket);
+            failQueries(kind, "模块连接已断开");
         }
     }
     private static long now() { return System.nanoTime() / 1_000_000L; }

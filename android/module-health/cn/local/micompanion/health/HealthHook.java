@@ -4,6 +4,7 @@ import android.app.Application;
 import android.content.Context;
 import android.database.sqlite.SQLiteDatabase;
 import cn.local.micompanion.LocalCollector;
+import cn.local.micompanion.HealthQueryService;
 import cn.local.micompanion.hook.LinkClient;
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
@@ -41,8 +42,10 @@ public final class HealthHook implements IXposedHookLoadPackage {
         HealthAboutInjector.install(lp.classLoader);
         XposedHelpers.findAndHookMethod(Application.class, "onCreate", new XC_MethodHook() {
             @Override protected void afterHookedMethod(MethodHookParam param) {
-                target = (Context)param.thisObject;
-                client = LinkClient.shared(target, "health");
+                Context app = (Context)param.thisObject;
+                target = app;
+                client = LinkClient.shared(app, "health");
+                client.setQueryHandler(query -> HealthQueryService.query(app, query));
                 client.start();
                 if (!started) {
                     started = true;

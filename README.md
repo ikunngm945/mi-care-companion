@@ -1,4 +1,6 @@
-# 小米关怀助手 0.7.0
+# 小米关怀助手 0.8.0
+
+0.8.0 新增只读 MCP：本机或局域网客户端可按天查询睡眠概括/全部睡眠阶段段、心率、压力、血氧；睡眠和三项指标分别独立，明细按 15 分钟返回时间范围与该范围内最小-最大。MCP 服务在主程序内，明细由健康模块通过现有 WebSocket 查询，不使用 root 读健康库。
 
 0.7.0 健康视图增补：活动按近 7 个本地日逐天列出步数、活动卡路里和中高强度活动时长，不做合计；当次睡眠保留阶段明细和各类合计，其余睡眠只保留入睡/醒来、总时长和分期时长；当天运动读取原应用的 `sport_report`，展示距离、时长、配速、心率、步频和步幅。
 
@@ -12,9 +14,29 @@
 
 0.6.5修复“新睡眠已同步，仍读取上一次主睡眠”：移除误加的 `isComplete=1` 筛选，保留未删除、起止、时长、冲突与阶段校验。源端完整状态不等于同步状态，为0的记录可读取但不代表最终定稿；睡眠阈值与周期口径不变。新增真实只读SQLite回归测试，详见[睡眠筛选修复验收](<docs/verification-sleep-selection.md>)。
 
+## 0.8.0 MCP 按天健康查询
+
+主程序内置只读 MCP Streamable HTTP 端点，端口固定 `17891`，路径 `/mcp`，使用与数据连接相同的 16 位 Token 作为 `Authorization: Bearer <Token>`：
+
+- 本机：`http://127.0.0.1:17891/mcp`
+- 局域网/其他设备：`http://<手机局域网IP>:17891/mcp`
+
+提供 8 个独立工具：
+
+- `sleep_summary(date)` / `sleep_detail(date)`
+- `heart_rate_summary(date)` / `heart_rate_detail(date)`
+- `stress_summary(date)` / `stress_detail(date)`
+- `spo2_summary(date)` / `spo2_detail(date)`
+
+`date` 为 `YYYY-MM-DD`，省略为今天，按设备本地时区（当前为 `Asia/Shanghai`）解释。睡眠按醒来日期归档，跨午夜睡眠归到醒来日；`sleep_detail` 返回当天所有睡眠段及每段全部阶段段（起止、阶段、该段心率/血氧范围），一次打包，不是逐段请求。三项指标 detail 固定按 15 分钟桶返回 `HH:mm-HH:mm` 和该桶最小值-最大值；summary 返回当天范围、平均值和采样数。
+
+MCP 查询由健康模块在目标应用进程内只读执行；健康应用未运行时，主程序沿用现有 Root/Shizuku 通道尝试拉起并最多等 15 秒。没有拉起权限或超时会明确返回不可用，不回退 root 读库，也不补 0。MCP 端点监听所有网卡以便局域网客户端访问，必须使用 Token；当前为明文 HTTP，公网使用请自行加 HTTPS 反向代理，不要直接暴露到公网。
+
+真机验证记录见 [0.8.0 MCP 验收](<docs/verification-mcp.md>)。
+
 ## 0.7.0 三 APK 与数据连接
 
-- 安装 `mi-companion-0.7.0.apk`、`mi-companion-weather-0.7.0.apk`、`mi-companion-health-0.7.0.apk`，三者同一签名。主程序包名不变，升级保留原 AstrBot 配置、事件历史和 Key；旧单 APK 的 LSPosed 模块条目会随升级消失。
+- 安装 `mi-companion-0.8.0.apk`、`mi-companion-weather-0.8.0.apk`、`mi-companion-health-0.8.0.apk`，三者同一签名。主程序包名不变，升级保留原 AstrBot 配置、事件历史和 Key；旧单 APK 的 LSPosed 模块条目会随升级消失。
 - 在 LSPosed 中分别启用天气模块（作用域仅 `com.miui.weather2`）和健康模块（作用域仅 `com.mi.health`），然后重启两个目标应用。主程序不再出现在 LSPosed 列表中。
 - 主程序“数据连接”区块生成并展示 16 位 Token（大小写字母与数字），默认端口 `17890`，可复制、可重新生成。Token 在本机 no-backup 文件中用 Android Keystore 加密。
 - 天气模块在天气应用设置页内容顶部放一个独立按钮“数据连接设置”；点开进入单独的全屏配置页，填端口和 Token 后返回即可。
@@ -28,14 +50,14 @@
 
 ### 数据连接安全边界
 
-- 服务端只绑定 `127.0.0.1`，不监听局域网；握手必须携带正确 Token，长度、字符集不符直接拒绝。
+- 数据连接 WebSocket 服务端只绑定 `127.0.0.1`；MCP 服务为支持局域网客户端监听所有网卡，但必须携带正确 Token，长度、字符集不符直接拒绝。
 - 模块配置写在各自目标应用的私有 prefs 中；Token 在本机回环上明文传输，能读设备存储的 root 用户仍可获取。不要把 Token 写进提示词或公开日志。
 - 快照仍受 256 KiB、6 字段结构、来源包名和 120 秒周期新鲜度约束；非法快照不落盘。
 - 模块不申请额外权限；socket 使用目标应用自身的 `INTERNET` 权限。
 
 ## 配置和使用
 
-1. 从 [GitHub Releases](<https://github.com/ikunngm945/mi-care-companion/releases>) 下载三个 0.7.0 APK 并安装：主程序包名 `cn.local.micompanion`，天气模块 `cn.local.micompanion.weather`，健康模块 `cn.local.micompanion.health`。在 LSPosed 中分别启用两个模块，天气模块只勾 `com.miui.weather2`，健康模块只勾 `com.mi.health`；更新模块后重启对应源应用，不清数据。
+1. 从 [GitHub Releases](<https://github.com/ikunngm945/mi-care-companion/releases>) 下载三个 0.8.0 APK 并安装：主程序包名 `cn.local.micompanion`，天气模块 `cn.local.micompanion.weather`，健康模块 `cn.local.micompanion.health`。在 LSPosed 中分别启用两个模块，天气模块只勾 `com.miui.weather2`，健康模块只勾 `com.mi.health`；更新模块后重启对应源应用，不清数据。
 2. 在助手授权使用情况访问、通知，按需允许 HyperOS 自启动/后台/电池不限制。
 3. AstrBot 官方接口填写自己部署的服务地址，例如 `https://astrbot.example.com/api/v1`，域名和端口以实际部署为准。根地址或旧 `/v1` 输入会规范化为 `/api/v1`，不是 OpenAI 模型接口。
 4. 填 **AstrBot 官方 API Key**，需要 `chat`、`im` 和 `config` 权限（config范围可能也允许改配置，请妥善保管；本助手只GET读取配置）；不是模型 Key。目标 UMO 在机器人目标会话通过 `/sid` 获取，应含机器人实例ID、消息类型和会话ID。勿只填数字。
@@ -49,7 +71,7 @@
 ## 官方接口的真实边界
 
 - 每任务新建隔离 webchat 会话 `mi-companion-<UUID>`，用户名固定 `mi-companion`，不与其他任务共享聊天历史。生成前重新匹配目标UMO对应配置档，传官方 `config_id`，使用该档人格/模型/工具设置；不修改全局配置。官方chat会为自身WebChat会话登记精确路由，不影响目标会话原路由。这里跟随的是配置档人格，不能保证复制目标会话单独切换的人格或插件注入。GET检查和生成之间服务端配置仍可能被他人改变，不具备原子锁定。
-- 新增可编辑多行关怀提示词，保存后生效，“恢复默认提示词”仅修改草稿，仍需保存。空白使用默认，最多4000 Unicode码点。默认分析天气、屏幕、健康并给可行建议，保留服务端人格，优先100–200字。正文超过500码点时在可用句末截取并加省略号（所有标点空白/emoji计入上限），没有完整句时取前499码点加省略号。只裁正文不重新调用模型。不要把Key填入提示词。
+- 新增可编辑多行关怀提示词，保存后生效，“恢复默认提示词”仅修改草稿，仍需保存。空白使用默认，最多4000 Unicode码点。默认分析天气、屏幕、健康并给可行建议，保留服务端人格，整体约300字，不设上限；不按固定码点截断正文。不要把Key填入提示词。
 - 每事件冻结创建时提示词；匹配配置ID在生成前保存，已有正文重试若路由指向其他档则暂停，不将旧人格正文补签成新配置。旧0.3 ready正文缺配置来源同样暂停，需用户核对后新建任务。
 - 官方API没有单次请求禁工具选项。提示要求只写正文，客户端检测到工具调用即拒绝转发，但不能撤销服务端已经执行的工具。务必在 AstrBot 中按需限制工具与相关插件；关闭 HTTP 流也不代表远端模型/工具已停止。
 - 仅提取安全的普通正文，不发送推理、工具结果、附件路径或 `complete.data`。必须收到 `end` 并读到正常EOF，无错误，才发送。
@@ -96,7 +118,7 @@ bash tools/test.sh
 bash tools/build.sh
 ```
 
-`tools/build.sh` 产出 `dist/mi-companion.apk`、`dist/mi-companion-weather.apk`、`dist/mi-companion-health.apk` 以及三个带版本号的副本和 `dist/SHA256SUMS-0.7.0.txt`。三个 APK 使用同一签名。
+`tools/build.sh` 产出 `dist/mi-companion.apk`、`dist/mi-companion-weather.apk`、`dist/mi-companion-health.apk` 以及三个带版本号的副本和 `dist/SHA256SUMS-0.8.0.txt`。三个 APK 使用同一签名。
 
 Java编译API36，资源定义API34兼容旧aapt2，targetSdk仍36。编译依赖、build私有数据、签名私钥不进入源码包。自签开发密钥密码公开，不作为生产安全保护；私钥请自行妥善备份，换签名不能覆盖旧安装。
 

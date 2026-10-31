@@ -14,6 +14,7 @@ public final class MonitorService extends Service {
  public static final String ACTION_RELOAD_LINK="cn.local.micompanion.action.RELOAD_LINK";
  public static final String ACTION_REFRESH="cn.local.micompanion.action.REFRESH";
  private static volatile LinkServer link;
+ private static volatile McpServer mcp;
  private static volatile boolean serviceRunning;
  private final Handler h=new Handler(Looper.getMainLooper());
  private final ExecutorService net=Executors.newSingleThreadExecutor();
@@ -151,17 +152,38 @@ public final class MonitorService extends Service {
   return p.getBoolean("enabled",false)?"监控中 · 数据接收中":"数据接收中（自动监控未启用）";
  }
  private void startLink(){
+  if(mcp!=null){mcp.stop();mcp=null;}
   if(link!=null)link.stop();
   link=null;
   try{
    SettingsStore.Config cfg=SettingsStore.ensureLink(this);
    LinkServer server=new LinkServer(cfg.port,cfg.token,(kind,snapshot)->SnapshotStore.put(this,kind,snapshot));
-   if(server.start()){link=server;p.edit().remove("link_error").apply();}
+   if(server.start()){
+    link=server;p.edit().remove("link_error").apply();
+    McpServer service=new McpServer(cfg.token,this::queryHealth);
+    if(service.start()){mcp=service;p.edit().remove("mcp_error").apply();}
+    else p.edit().putString("mcp_error",service.error()).apply();
+   }
    else p.edit().putString("link_error",server.error()).apply();
   }catch(Exception ex){
    p.edit().putString("link_error","本机配置读取失败："+ex.getClass().getSimpleName()).apply();
   }
   updateNotification();
+ }
+ private org.json.JSONObject queryHealth(String action,String date)throws Exception{
+  LinkServer server=link;
+  if(server==null)throw new IllegalStateException("本机数据连接未启动");
+  if(!server.status("health").connected){
+   TargetRecovery.launchNowSync(this,"health");
+   long deadline=System.currentTimeMillis()+15_000;
+   while(System.currentTimeMillis()<deadline&&!server.status("health").connected){
+    try{Thread.sleep(250);}catch(InterruptedException e){Thread.currentThread().interrupt();break;}
+   }
+  }
+  if(!server.status("health").connected)throw new IllegalStateException("小米健康未连接；请打开健康应用后重试");
+  org.json.JSONObject request=new org.json.JSONObject().put("action",action);
+  if(date!=null&&!date.trim().isEmpty())request.put("date",date.trim());
+  return server.query("health",request,20_000);
  }
  private void reloadLink(){
   startLink();
@@ -185,6 +207,7 @@ public final class MonitorService extends Service {
  }
  @Override public void onDestroy(){
   h.removeCallbacksAndMessages(null);unregisterReceiver(screen);serviceRunning=false;
+  if(mcp!=null){mcp.stop();mcp=null;}
   if(link!=null){link.stop();link=null;}
   if(!p.getBoolean("enabled",false)){state.restart();p.edit().putString("state",state.encode()).remove("boot").remove("last_elapsed").remove("last_wall").commit();}
   // A system stop keeps the last observed checkpoint for evidence-based same-boot recovery.

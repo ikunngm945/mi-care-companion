@@ -298,6 +298,10 @@ public final class MainActivity extends Activity {
         else if (!server.isRunning()) out.append("服务启动失败：").append(server.error()).append('\n');
         else out.append("监听 127.0.0.1:").append(server.port()).append('\n');
         if (!storedError.isEmpty()) out.append("最近服务错误：").append(storedError).append('\n');
+        String mcpError = getSharedPreferences("monitor", 0).getString("mcp_error", "");
+        out.append("MCP：http://127.0.0.1:").append(McpServer.PORT).append("/mcp（Token 同上）\n");
+        out.append("局域网：http://<手机局域网IP>:").append(McpServer.PORT).append("/mcp\n");
+        if (!mcpError.isEmpty()) out.append("MCP 错误：").append(mcpError).append('\n');
         long now = System.nanoTime() / 1_000_000L; // LinkServer uses the same monotonic clock
         for (String kind : new String[]{"weather", "health"}) {
             String name = "weather".equals(kind) ? "天气模块" : "健康模块";

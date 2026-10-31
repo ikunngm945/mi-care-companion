@@ -20,7 +20,7 @@ import java.util.concurrent.atomic.AtomicLong;
 /** Injected WebSocket client: connects to the main app, sends the latest snapshot, answers pings. */
 public final class LinkClient {
     private static final String TAG = "MiCompanionHook";
-    private static final String VERSION = "0.7.0";
+    private static final String VERSION = "0.8.0";
     private static volatile LinkClient shared;
 
     public static LinkClient shared(Context context, String kind) {
@@ -56,6 +56,9 @@ public final class LinkClient {
 
     private static final class AuthFailure extends Exception { }
 
+    /** Handles read-only history queries forwarded by the main app. */
+    public interface QueryHandler { JSONObject handle(JSONObject query) throws Exception; }
+
     private Context context;
     private final String kind;
     private final SecureRandom random = new SecureRandom();
@@ -73,6 +76,7 @@ public final class LinkClient {
     private volatile long lastHeartbeatAt;
     private volatile long delivered;
     private volatile JSONObject pending;
+    private volatile QueryHandler queryHandler;
 
     private LinkClient(Context context, String kind) {
         this.context = context;
@@ -120,6 +124,8 @@ public final class LinkClient {
             close();
         }
     }
+
+    public void setQueryHandler(QueryHandler handler) { queryHandler = handler; }
 
     public Status status() {
         return new Status(state, connected, lastHeartbeatAt, authFailures, error, delivered);
@@ -234,7 +240,40 @@ public final class LinkClient {
                 error = "";
             } else if ("error".equals(type)) {
                 error = message.optString("reason", "服务端拒绝了快照");
+            } else if ("query".equals(type)) {
+                answerQuery(message);
             }
+        }
+    }
+
+    private void answerQuery(JSONObject message) {
+        String id = message.optString("id", "");
+        JSONObject response = new JSONObject();
+        try {
+            response.put("type", "query_result").put("id", id);
+            QueryHandler handler = queryHandler;
+            if (handler == null) throw new IllegalStateException("查询处理器未就绪");
+            JSONObject query = message.optJSONObject("query");
+            if (query == null) throw new IllegalArgumentException("查询参数缺失");
+            JSONObject data = handler.handle(query);
+            if (data == null) throw new IllegalStateException("查询没有结果");
+            response.put("ok", true).put("data", data);
+        } catch (Exception e) {
+            try {
+                response.put("type", "query_result").put("id", id).put("ok", false)
+                        .put("code", "query").put("reason", e.getMessage() == null ? "查询失败" : e.getMessage());
+            } catch (Exception ignored) { }
+        }
+        try {
+            byte[] payload = response.toString().getBytes(StandardCharsets.UTF_8);
+            if (payload.length > LinkProtocol.MAX_FRAME - 1024) {
+                response = new JSONObject().put("type", "query_result").put("id", id).put("ok", false)
+                        .put("code", "size").put("reason", "查询结果过大");
+                payload = response.toString().getBytes(StandardCharsets.UTF_8);
+            }
+            writeRaw(LinkProtocol.frame(LinkProtocol.OP_TEXT, payload, true, random));
+        } catch (Exception e) {
+            error = "查询结果回传失败";
         }
     }
 

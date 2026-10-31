@@ -25,7 +25,7 @@ build() {
   apksigner sign --ks signing/local.p12 --ks-pass pass:changeit --key-pass pass:changeit \
     --ks-key-alias local --out "dist/$name.apk" "$work/aligned.apk"
   apksigner verify "dist/$name.apk"
-  cp "dist/$name.apk" "dist/$name-0.7.0.apk"
+  cp "dist/$name.apk" "dist/$name-0.8.0.apk"
   printf 'Built dist/%s.apk\n' "$name"
 }
 
@@ -42,6 +42,6 @@ build mi-companion android/AndroidManifest.xml android/res android/assets "${APP
 build mi-companion-weather android/module-weather/AndroidManifest.xml android/module-weather/res android/module-weather/assets "${WEATHER[@]}"
 build mi-companion-health android/module-health/AndroidManifest.xml android/module-health/res android/module-health/assets "${HEALTH[@]}"
 
-(cd dist && sha256sum mi-companion-0.7.0.apk mi-companion-weather-0.7.0.apk mi-companion-health-0.7.0.apk > SHA256SUMS-0.7.0.txt)
-cat dist/SHA256SUMS-0.7.0.txt
+(cd dist && sha256sum mi-companion-0.8.0.apk mi-companion-weather-0.8.0.apk mi-companion-health-0.8.0.apk > SHA256SUMS-0.8.0.txt)
+cat dist/SHA256SUMS-0.8.0.txt
 printf 'Build artifacts: %s\n' "$B"
