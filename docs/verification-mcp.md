@@ -48,3 +48,16 @@
 - detail 固定 15 分钟聚合，不返回原始逐点序列；summary 的范围和平均值来自同一批日记录。
 - 健康应用未运行时，主程序尝试通过已有 Root/Shizuku 通道拉起，最多等 15 秒；失败明确返回“健康应用未连接”，不伪造健康数据。
 - 当前 MCP 使用 HTTP + Bearer Token，适合本机/可信局域网；公网请使用 HTTPS 反向代理并限制访问来源。
+
+## AstrBot 接入示例
+
+```json
+{
+  "url": "http://127.0.0.1:17891/mcp",
+  "transport": "streamable_http",
+  "headers": {"Authorization": "Bearer <Token>"},
+  "timeout": 30
+}
+```
+
+AstrBot 的 `_quick_test_mcp_connection` 会先发 `initialize` 并检查 HTTP 200；实测本服务返回 200 和 `protocolVersion=2024-11-05`。随后标准 Streamable HTTP 客户端发 `tools/list`/`tools/call`，不需要额外 SSE 通道。

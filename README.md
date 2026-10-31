@@ -32,6 +32,19 @@
 
 MCP 查询由健康模块在目标应用进程内只读执行；健康应用未运行时，主程序沿用现有 Root/Shizuku 通道尝试拉起并最多等 15 秒。没有拉起权限或超时会明确返回不可用，不回退 root 读库，也不补 0。MCP 端点监听所有网卡以便局域网客户端访问，必须使用 Token；当前为明文 HTTP，公网使用请自行加 HTTPS 反向代理，不要直接暴露到公网。
 
+AstrBot 的 MCP 配置示例（本机）：
+
+```json
+{
+  "url": "http://127.0.0.1:17891/mcp",
+  "transport": "streamable_http",
+  "headers": {"Authorization": "Bearer <主程序显示的 Token>"},
+  "timeout": 30
+}
+```
+
+局域网客户端只把 `127.0.0.1` 换成手机局域网 IP；不要把 Token 写入公开配置或日志。AstrBot 的 MCP 连接会先发一次 `initialize` 做连通性检查，再建立标准 Streamable HTTP 会话；本服务支持该流程。
+
 真机验证记录见 [0.8.0 MCP 验收](<docs/verification-mcp.md>)。
 
 ## 0.7.0 三 APK 与数据连接
