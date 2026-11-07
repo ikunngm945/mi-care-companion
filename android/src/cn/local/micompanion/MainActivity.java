@@ -100,12 +100,12 @@ public final class MainActivity extends Activity {
                     refresh();
                 }).show());
         autoPull = new CheckBox(this);
-        autoPull.setText("每小时同步及发送前自动拉起天气/健康（Root 或 Shizuku）");
+        autoPull.setText("每小时自动请求模块刷新数据库（不自动打开应用）");
         autoPull.setChecked(getSharedPreferences("monitor", 0).getBoolean("auto_pull", true));
         autoPull.setOnCheckedChangeListener((v, checked) ->
                 getSharedPreferences("monitor", 0).edit().putBoolean("auto_pull", checked).commit());
         layout.addView(autoPull);
-        text("后台服务启用时每小时只把天气/健康数据同步到本机，不发送；只有满足原自动触发（连续息屏超过3小时、下一次连续使用超过10分钟）才发送。每小时同步和发送前才拉起模块，最多等 60 秒；无法连接时使用上一次事件的数据。", 14);
+        text("后台服务每小时只请求已连接模块刷新健康数据库，不自动打开天气/健康；模块未连接时保留上一次数据。需要首次授权或模块掉线时，手动点“立即拉起天气和健康”。", 14);
         preferShizuku = new CheckBox(this);
         preferShizuku.setText("优先使用 Shizuku 拉起（备用通道）");
         preferShizuku.setChecked(getSharedPreferences("monitor", 0).getBoolean("prefer_shizuku", false));
@@ -128,6 +128,10 @@ public final class MainActivity extends Activity {
             TargetRecovery.launchNow(this, "health");
             showReport("已发送拉起命令；使用 Root 或 Shizuku，天气/健康会短暂打开后返回桌面");
         });
+        button("同步数据库与请求", v -> background((Button)v, "正在请求健康模块同步数据库…", () -> {
+            MonitorService.requestDatabaseSync(this);
+            return "已请求健康模块同步数据库；传输完成后 MCP 直接读取本机副本";
+        }));
         privilege = text("", 14);
         linkStatus = text("", 15); linkStatus.setTextIsSelectable(true);
 

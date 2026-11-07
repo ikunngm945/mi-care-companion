@@ -105,14 +105,16 @@ public final class MonitorService extends Service {
   checkpoint(state,now,wall,active,open).commit();
   long lastHourly=p.getLong("last_hourly_wall",0);
   if(lastHourly<=0)p.edit().putLong("last_hourly_wall",wall).apply();
-  else if(PendingAutomatic.hourlyDue(lastHourly,wall)&&!hourlyRefreshing){
+  else if(p.getBoolean("auto_pull",true)&&PendingAutomatic.hourlyDue(lastHourly,wall)&&!hourlyRefreshing){
    // Refresh the local snapshots only. Automatic sending still uses the original long-idle trigger.
    if(p.edit().putLong("last_hourly_wall",wall).commit()){
     hourlyRefreshing=true;final long hourlyAt=wall;
     net.execute(()->{
      try{
-      boolean synced=TargetRecovery.ensureForSend(MonitorService.this,link,60_000);
-      p.edit().putString("hourly_status",synced?"每小时数据已同步到本机（未发送）":"每小时同步失败，保留上一次数据")
+      LinkServer server=link;
+      boolean synced=server!=null&&server.status("health").connected;
+      if(synced)server.query("health",new org.json.JSONObject().put("action","sync_database"),5_000);
+      p.edit().putString("hourly_status",synced?"每小时已请求健康模块刷新数据库（未发送）":"健康模块未连接，保留上一次数据")
        .putLong("hourly_at",hourlyAt).apply();
      }catch(Exception e){
       p.edit().putString("hourly_status","每小时同步失败："+e.getClass().getSimpleName()).putLong("hourly_at",hourlyAt).apply();
@@ -158,6 +160,7 @@ public final class MonitorService extends Service {
   try{
    SettingsStore.Config cfg=SettingsStore.ensureLink(this);
    LinkServer server=new LinkServer(cfg.port,cfg.token,(kind,snapshot)->SnapshotStore.put(this,kind,snapshot));
+   server.setDatabaseSink((kind,message)->HealthDatabaseStore.accept(this,message));
    if(server.start()){
     link=server;p.edit().remove("link_error").apply();
     McpServer service=new McpServer(cfg.token,this::queryHealth);
@@ -171,17 +174,18 @@ public final class MonitorService extends Service {
   updateNotification();
  }
  private org.json.JSONObject queryHealth(org.json.JSONObject request)throws Exception{
+  if("sync_database".equals(request.optString("action")))return requestDatabaseSync(this);
+  if(HealthDatabaseStore.available(this))return HealthDatabaseStore.query(this,request);
   LinkServer server=link;
   if(server==null)throw new IllegalStateException("本机数据连接未启动");
-  if(!server.status("health").connected){
-   TargetRecovery.launchNowSync(this,"health");
-   long deadline=System.currentTimeMillis()+15_000;
-   while(System.currentTimeMillis()<deadline&&!server.status("health").connected){
-    try{Thread.sleep(250);}catch(InterruptedException e){Thread.currentThread().interrupt();break;}
-   }
-  }
-  if(!server.status("health").connected)throw new IllegalStateException("小米健康未连接；请打开健康应用后重试");
+  if(!server.status("health").connected)throw new IllegalStateException("健康数据库尚未同步；请打开一次健康应用后点“同步数据库与请求”");
   return server.query("health",request,20_000);
+ }
+ static org.json.JSONObject requestDatabaseSync(Context context)throws Exception{
+  LinkServer server=link;
+  if(server==null)throw new IllegalStateException("本机数据连接未启动");
+  if(!server.status("health").connected)throw new IllegalStateException("小米健康未连接；请打开一次健康应用后重试");
+  return server.query("health",new org.json.JSONObject().put("action","sync_database"),10_000);
  }
  private void reloadLink(){
   startLink();

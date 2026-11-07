@@ -6,7 +6,7 @@
 
 - 主程序 MCP 监听 `*:17891`，路径 `/mcp`；本机使用 `127.0.0.1`，局域网使用手机地址（本次为 `192.168.110.9`）。
 - 无 `Authorization: Bearer <Token>` 返回 `HTTP/1.1 401`；正确 Token 返回 JSON-RPC 结果。
-- `initialize` 返回 `protocolVersion=2024-11-05`，`tools/list` 返回 10 个工具。
+- `initialize` 返回 `protocolVersion=2024-11-05`，`tools/list` 返回一个 `health` 工具；`action` 选择查询类型。
 
 ## 实测结果
 
@@ -72,10 +72,10 @@ t,心率,步频,步幅,配速,距离,卡路里,步数
 
 ## 边界
 
-- MCP 只读健康库，不提供写入工具；健康库仍只由健康模块进程打开。
+- MCP 只读主程序保存的健康数据库副本，不提供写入工具；首次连接或手动点“同步数据库与请求”时由健康模块复制。
 - 睡眠按醒来日归档；`sleep_detail` 包含当天结束的所有睡眠段，跨午夜段保留前一晚的起止时间。
 - 三项指标的 detail 固定 15 分钟聚合，不返回原始逐点序列；summary 的范围和平均值来自同一批日记录。运动 `exercise_detail` 是唯一返回逐秒序列的工具，数据来自健康应用私有记录文件。
-- 健康应用未运行时，主程序尝试通过已有 Root/Shizuku 通道拉起，最多等 15 秒；失败明确返回“健康应用未连接”，不伪造健康数据。
+- MCP 查询不自动拉起健康应用；本地副本已存在时，健康应用未运行也能查询。副本不存在时明确返回“健康数据库尚未同步”，不伪造健康数据。
 - 当前 MCP 使用 HTTP + Bearer Token，适合本机/可信局域网；公网请使用 HTTPS 反向代理并限制访问来源。
 
 ## AstrBot 接入示例
@@ -91,7 +91,7 @@ t,心率,步频,步幅,配速,距离,卡路里,步数
 
 AstrBot 的 `_quick_test_mcp_connection` 会先发 `initialize` 并检查 HTTP 200；实测本服务返回 200 和 `protocolVersion=2024-11-05`。随后标准 Streamable HTTP 客户端发 `tools/list`/`tools/call`，不需要额外 SSE 通道。
 
-2026-10-31 在 AstrBot 4.27.4 的「扩展 → MCP」中以名称 `mi_companion`、上述 URL/transport/Header 保存成功，接口返回 `connected=true`，工具列表为全部 10 个（`sleep_*`、`heart_rate_*`、`stress_*`、`spo2_*`、`exercise_records`、`exercise_detail`），`errlogs` 为空。
+2026-10-31 在 AstrBot 4.27.4 的「扩展 → MCP」中以名称 `mi_companion`、上述 URL/transport/Header 保存成功，接口返回 `connected=true`，工具列表为一个 `health` 工具（`action` 覆盖睡眠、心率、压力、血氧、运动摘要和运动详情），`errlogs` 为空。
 
 ### AstrBot 兼容补丁
 
@@ -102,3 +102,9 @@ AstrBot 的 `_quick_test_mcp_connection` 会先发 `initialize` 并检查 HTTP 2
 3. `mcp.Tool` 新版字段为 `input_schema`，构造 `MCPTool` 时优先读 `inputSchema`，不存在再读 `input_schema`。
 
 这三处只改 AstrBot 本机安装，不改本仓库 APK；AstrBot 升级后可能被覆盖。
+
+## 2026-11-07 数据库副本验收
+
+- 健康模块首次连接后，主程序 `files/health/fitness_data.db` 为 118 MiB，`files/health/fitness` 下 306 个运动详情文件。
+- 点“同步数据库与请求”后副本重新生成；MCP `health` 的 `sleep_summary`、`exercise_records`、`exercise_detail` 均从副本返回，逐秒明细 418 条。
+- `tools/list` 只返回一个 `health` 工具；`health` 的 `action` 覆盖原有 10 类查询。

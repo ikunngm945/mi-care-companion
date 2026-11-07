@@ -30,6 +30,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class LinkServer {
     private static final String TAG = "MiCompanionLink";
     public interface Sink { void store(String kind, JSONObject snapshot) throws Exception; }
+    public interface DatabaseSink { void accept(String kind, JSONObject message) throws Exception; }
 
     public static final class Status {
         public volatile boolean connected;
@@ -46,6 +47,7 @@ public final class LinkServer {
     private final int port;
     private final String token;
     private final Sink sink;
+    private volatile DatabaseSink databaseSink;
     private final long pingIntervalMs;
     private final long timeoutMs;
     private final SecureRandom random = new SecureRandom();
@@ -76,6 +78,7 @@ public final class LinkServer {
     public int port() { return port; }
     public String error() { return fatalError; }
     public boolean isRunning() { return running.get(); }
+    public void setDatabaseSink(DatabaseSink sink) { databaseSink = sink; }
     public Status status(String kind) {
         Status status = statuses.get(kind);
         return status == null ? new Status() : status;
@@ -370,6 +373,21 @@ public final class LinkServer {
                 String type = message.optString("type");
                 if ("query_result".equals(type)) {
                     completeQuery(message);
+                    continue;
+                }
+                if (type.startsWith("database_")) {
+                    DatabaseSink receiver = databaseSink;
+                    if (receiver == null || !"health".equals(kind)) {
+                        sendError("database", "数据库接收器未就绪");
+                        continue;
+                    }
+                    try {
+                        receiver.accept(kind, message);
+                        send(new JSONObject().put("type", "ack").put("storedAtMs", System.currentTimeMillis()));
+                    } catch (Exception e) {
+                        status.lastError = "数据库同步失败";
+                        sendError("database", e.getMessage() == null ? "数据库同步失败" : e.getMessage());
+                    }
                     continue;
                 }
                 if (!"snapshot".equals(type)) {

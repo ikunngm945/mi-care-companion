@@ -156,11 +156,12 @@ public final class McpServer {
 
     private JSONObject call(JSONObject params) throws Exception {
         if (params == null) throw new IllegalArgumentException("缺少 params");
-        String name = params.optString("name", "");
-        Action action = Action.of(name);
-        if (action == null) throw new IllegalArgumentException("未知工具");
+        if (!"health".equals(params.optString("name", ""))) throw new IllegalArgumentException("未知工具");
         JSONObject arguments = params.optJSONObject("arguments");
-        JSONObject request = arguments == null ? new JSONObject() : new JSONObject(arguments.toString());
+        if (arguments == null) throw new IllegalArgumentException("缺少 arguments");
+        Action action = Action.of(arguments.optString("action", ""));
+        if (action == null) throw new IllegalArgumentException("未知 action");
+        JSONObject request = new JSONObject(arguments.toString());
         request.put("action", action.action);
         JSONObject result = new JSONObject();
         try {
@@ -177,9 +178,31 @@ public final class McpServer {
     }
 
     private static JSONArray tools() throws Exception {
-        JSONArray out = new JSONArray();
-        for (Action action : Action.values()) out.put(action.tool());
-        return out;
+        return new JSONArray().put(new JSONObject()
+                .put("name", "health")
+                .put("description", "查询小米运动健康的睡眠、心率、压力、血氧和运动数据；用 action 选择类型，日期按 Asia/Shanghai")
+                .put("inputSchema", new JSONObject()
+                        .put("type", "object")
+                        .put("properties", new JSONObject()
+                                .put("action", new JSONObject().put("type", "string")
+                                        .put("description", "查询类型")
+                                        .put("enum", actionNames()))
+                                .put("date", new JSONObject().put("type", "string")
+                                        .put("description", "某一天 YYYY-MM-DD；睡眠和三项指标使用，省略为今天"))
+                                .put("start_date", new JSONObject().put("type", "string")
+                                        .put("description", "运动记录开始日期 YYYY-MM-DD，默认今天"))
+                                .put("end_date", new JSONObject().put("type", "string")
+                                        .put("description", "运动记录结束日期 YYYY-MM-DD（含），最多31天"))
+                                .put("id", new JSONObject().put("type", "string")
+                                        .put("description", "运动 ID：开始时间:结束时间:运动类型；exercise_detail 必填")))
+                        .put("required", new JSONArray().put("action"))
+                        .put("additionalProperties", false)));
+    }
+
+    private static JSONArray actionNames() {
+        JSONArray names = new JSONArray();
+        for (Action action : Action.values()) names.put(action.name);
+        return names;
     }
 
     private enum Action {

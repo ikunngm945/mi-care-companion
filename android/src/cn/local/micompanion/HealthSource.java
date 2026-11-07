@@ -14,7 +14,7 @@ public final class HealthSource {
  private static final int MAX_INPUT=1024*1024;
  interface Reader {JSONArray query(String sql,String[] args)throws Exception;}
  private static String iso(long ms){return new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX",Locale.US).format(new Date(ms));}
- static SQLiteDatabase open(File f){return SQLiteDatabase.openDatabase(f.getAbsolutePath(),null,SQLiteDatabase.OPEN_READONLY|SQLiteDatabase.NO_LOCALIZED_COLLATORS);}
+ public static SQLiteDatabase open(File f){return SQLiteDatabase.openDatabase(f.getAbsolutePath(),null,SQLiteDatabase.OPEN_READONLY|SQLiteDatabase.NO_LOCALIZED_COLLATORS);}
  static Reader reader(SQLiteDatabase db){return (sql,args)->{
   JSONArray rows=new JSONArray();try(Cursor c=db.rawQuery(sql,args)){while(c.moveToNext()){
     if(rows.length()>=12001)throw new IllegalArgumentException("query row limit");
@@ -27,7 +27,7 @@ public final class HealthSource {
     if(c.getColumnCount()>5)row.put("key",c.getString(5));rows.put(row);
   }}return rows;
  };}
- static File account(Context c){
+ public static File account(Context c){
   File root=c.getDatabasePath("x").getParentFile();if(root==null)return null;String active=LocalCollector.activeHealthPath;
   if(active!=null)try{File f=new File(active);if(f.getCanonicalPath().startsWith(root.getCanonicalPath()+"/")&&f.isFile()&&"fitness_summary".equals(f.getName()))return f.getParentFile();}catch(Exception ignored){}
   File[] accounts=root.listFiles();ArrayList<File> found=new ArrayList<>();

@@ -5,6 +5,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 public final class McpServerTest {
@@ -39,12 +40,13 @@ public final class McpServerTest {
             check(init.startsWith("HTTP/1.1 200"), "initialize status");
             check(init.contains("\"protocolVersion\":\"2024-11-05\""), "protocol version");
             String list = request("abcdefghijklmnop", "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}");
-            check(list.contains("sleep_detail") && list.contains("spo2_detail"), "tools list");
-            check(list.contains("exercise_records") && list.contains("exercise_detail"), "exercise tools list");
-            String call = request("abcdefghijklmnop", "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"heart_rate_detail\",\"arguments\":{\"date\":\"2026-10-31\"}}}");
+            JSONObject listed = new JSONObject(list.substring(list.indexOf("\r\n\r\n") + 4));
+            JSONArray tools = listed.getJSONObject("result").getJSONArray("tools");
+            check(tools.length() == 1 && "health".equals(tools.getJSONObject(0).getString("name")), "single health tool");
+            String call = request("abcdefghijklmnop", "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"health\",\"arguments\":{\"action\":\"heart_rate_detail\",\"date\":\"2026-10-31\"}}}");
             check(call.contains("08:00-08:15"), "detail text");
             check(call.contains("82-98"), "range text");
-            String exerciseCall = request("abcdefghijklmnop", "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"exercise_records\",\"arguments\":{\"start_date\":\"2026-10-31\",\"end_date\":\"2026-10-31\"}}}");
+            String exerciseCall = request("abcdefghijklmnop", "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"health\",\"arguments\":{\"action\":\"exercise_records\",\"start_date\":\"2026-10-31\",\"end_date\":\"2026-10-31\"}}}");
             check(exerciseCall.contains("户外跑步") && exerciseCall.contains("ID 1:482:22"), "exercise text");
             check(exerciseCall.contains("8'21"), "exercise pace text");
             System.out.println("McpServerTest OK");
