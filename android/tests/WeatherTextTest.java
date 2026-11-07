@@ -72,6 +72,8 @@ public final class WeatherTextTest {
    eq(allChars,new JSONObject(WeatherText.snapshot(chars.toString())).getString("other"));groups++;
    String simple=facts("{\"temperature\":{\"value\":33,\"unit\":\"℃\"},\"weather_code\":0,\"air_quality\":{\"aqi\":40}}");
    has(simple,"气温：33℃");no(simple,"{33℃}");if(simple.indexOf("天气：晴")>simple.indexOf("空气质量："))throw new AssertionError("current weather must precede secondary details");groups++;
+   String compactFacts=WeatherText.compact(o("{\"temperature\":{\"value\":33,\"unit\":\"℃\"},\"weather_code\":3,\"uv_index\":7,\"humidity\":{\"value\":50,\"unit\":\"%\"},\"feelsLike\":{\"value\":35,\"unit\":\"℃\"},\"pressure\":{\"value\":1012,\"unit\":\"hPa\"},\"today\":{\"forecast_date\":\"2026-10-17\",\"sunrise\":\"06:12\",\"sunset\":\"17:45\"},\"forecast_hourly\":[{\"hour_index\":0,\"source_times\":{\"temperature\":\"2026-10-17T08:00:00+08:00\"},\"temperature\":{\"value\":25,\"unit\":\"℃\"},\"weather_code\":1,\"precipitation_probability\":{\"value\":20,\"unit\":\"%\"}}]}"),"2026-10-17T09:00:00+08:00");
+   has(compactFacts,"气温 33℃");has(compactFacts,"紫外线 7（强）");has(compactFacts,"湿度 50%");has(compactFacts,"体感 35℃");has(compactFacts,"气压 1012hPa");has(compactFacts,"日出 06:12");has(compactFacts,"日落 17:45");has(compactFacts,"08:00  多云 25℃");no(compactFacts,"日预报");groups++;
    System.out.println("WeatherTextTest: PASS ("+groups+" groups)");
  }
 }

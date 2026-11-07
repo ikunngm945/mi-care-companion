@@ -20,6 +20,85 @@ public final class WeatherText {
  public static String format(JSONObject category,String collectedAt)throws Exception{
   try{return formatChecked(category,collectedAt);}catch(Exception e){throw new IllegalArgumentException("天气字段格式或整理结果无效，已停止，未截断事实");}
  }
+ /** Compact prompt facts: only today's hourly temperature/state plus today's current extras. */
+ public static String compactSnapshot(String value)throws Exception{
+  RouteResolver.validateJsonObject(value);
+  JSONObject root=new JSONObject(value),weather=root.optJSONObject("weather");
+  if(weather==null||weather.optJSONObject("fields")==null)return value;
+  weather.put("facts",compact(weather.optJSONObject("fields"),root.optString("collected_at","")));
+  weather.remove("fields");
+  return bounded(json(root));
+ }
+ static String compact(JSONObject fields,String collectedAt)throws Exception{
+  LocalDate today=null;
+  try{today=OffsetDateTime.parse(collectedAt).toLocalDate();}catch(Exception ignored){}
+  if(today==null){try{today=OffsetDateTime.parse(fields.optString("observed_at")).toLocalDate();}catch(Exception ignored){}}
+  StringBuilder out=new StringBuilder("天气（今天").append(today==null?"":" "+today).append("，按小时）：\n");
+  StringBuilder now=new StringBuilder();
+  value(now,"气温",fields.opt("temperature"),"℃",false);
+  value(now,"天气",fields.opt("weather_code"),null,true);
+  value(now,"体感",fields.opt("feelsLike"),"℃",false);
+  value(now,"湿度",fields.opt("humidity"),"%",false);
+  value(now,"紫外线",fields.opt("uv_index"),null,false);
+  value(now,"气压",fields.opt("pressure"),"hPa",false);
+  JSONObject air=fields.optJSONObject("air_quality");
+  if(air!=null)value(now,"AQI",air.opt("aqi"),null,false);
+  JSONObject day=todayObject(fields,today);
+  if(day!=null){
+   Object sunrise=day.opt("sunrise");if(missing(sunrise))sunrise=dailyValue(fields,today,"sunrise");
+   Object sunset=day.opt("sunset");if(missing(sunset))sunset=dailyValue(fields,today,"sunset");
+   value(now,"日出",sunrise,null,false);value(now,"日落",sunset,null,false);
+  }
+  if(now.length()>0)out.append("现在：").append(now).append('\n');
+  JSONArray hourly=fields.optJSONArray("forecast_hourly");
+  TreeMap<Long,JSONObject> sorted=new TreeMap<>();
+  for(int i=0;hourly!=null&&i<hourly.length();i++){
+   JSONObject o=hourly.optJSONObject(i);if(o==null)continue;
+   JSONObject times=o.optJSONObject("source_times");
+   Object base=times==null?null:times.opt("temperature");
+   if(!validTime(base))continue;
+   try{
+    OffsetDateTime time=OffsetDateTime.parse(base.toString());
+    Object index=o.opt("hour_index");
+    if(index instanceof Number)time=time.plusHours(((Number)index).longValue());
+    if(today!=null&&!time.toLocalDate().equals(today))continue;
+    JSONObject copy=new JSONObject(o.toString());
+    copy.put("__time",time.toLocalTime().toString().substring(0,5));
+    sorted.put(time.toInstant().toEpochMilli(),copy);
+   }catch(Exception ignored){}
+  }
+  if(sorted.isEmpty())out.append("今天没有可用的逐小时预报\n");
+  for(JSONObject o:sorted.values()){
+   out.append(o.optString("__time")).append("  ").append(name(o.opt("weather_code"))).append(' ').append(show(o.opt("temperature")));
+   if(o.has("precipitation_probability"))out.append("；降水 ").append(show(o.opt("precipitation_probability")));
+   out.append('\n');
+  }
+  return bounded(out.toString());
+ }
+ private static JSONObject todayObject(JSONObject fields,LocalDate today)throws Exception{
+  JSONObject direct=fields.optJSONObject("today");
+  if(direct!=null&&(today==null||today.toString().equals(direct.optString("forecast_date"))))return direct;
+  JSONArray daily=fields.optJSONArray("forecast_daily");
+  for(int i=0;daily!=null&&i<daily.length();i++){
+   JSONObject o=daily.optJSONObject(i);
+   if(o!=null&&(today==null||today.toString().equals(o.optString("forecast_date"))))return o;
+  }
+  return today==null?direct:null;
+ }
+ private static Object dailyValue(JSONObject fields,LocalDate today,String key)throws Exception{
+  JSONArray daily=fields.optJSONArray("forecast_daily");
+  for(int i=0;daily!=null&&i<daily.length();i++){
+   JSONObject o=daily.optJSONObject(i);
+   if(o!=null&&today!=null&&today.toString().equals(o.optString("forecast_date"))&&!missing(o.opt(key)))return o.opt(key);
+  }
+  return null;
+ }
+ private static void value(StringBuilder out,String label,Object value,String unit,boolean weather)throws Exception{
+  if(missing(value))return;
+  if(out.length()>0)out.append("；");
+  out.append(label).append(' ').append(weather?name(value):label.equals("紫外线")?uv(value):show(value));
+  if(unit!=null&&value instanceof Number)out.append(unit);
+ }
  private static String formatChecked(JSONObject category,String collectedAt)throws Exception{
   RouteResolver.validateJsonObject(category.toString());
   if(category.opt("collected_at") instanceof String)collectedAt=category.getString("collected_at");

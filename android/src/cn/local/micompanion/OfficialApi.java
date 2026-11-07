@@ -96,7 +96,7 @@ public final class OfficialApi {
         JSONObject flags = new JSONObject().put("enable_streaming", true)
                 .put("enable_inline_genui", false).put("enable_default_system_prompt", true);
         JSONObject body = new JSONObject().put("username", USER).put("session_id", USER + "-" + eventId)
-                .put("message", AdvicePrompt.message(cfg.prompt,HealthText.snapshot(WeatherText.snapshot(snapshot)))).put("enable_streaming", true).put("flags", flags)
+                .put("message", AdvicePrompt.message(cfg.prompt,HealthText.snapshot(WeatherText.compactSnapshot(snapshot)))).put("enable_streaming", true).put("flags", flags)
                 .put("config_id",selected.configId);
         return AdvicePrompt.limit(request(cfg, "POST", "/chat", body, true));
     }

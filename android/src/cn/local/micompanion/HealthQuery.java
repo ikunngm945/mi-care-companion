@@ -36,16 +36,74 @@ final class HealthQuery {
         if (db == null) throw new IllegalArgumentException("健康数据库不可用");
         String action = request.optString("action", "");
         if (action.startsWith("exercise_")) return exercise(db, action, request, now, zone, fitnessRoot);
+        if (action.endsWith("_summary") && (has(request, "start_date") || has(request, "end_date")))
+            return rangeSummary(db, action, request, now, zone);
         LocalDate day = date(request.optString("date", ""), now, zone);
         String date = day.toString();
         ZoneId zid = zone.toZoneId();
-        long start = day.atStartOfDay(zid).toEpochSecond();
-        long end = day.plusDays(1).atStartOfDay(zid).toEpochSecond();
-        if (start >= now / 1000L) return missing(action, date, zone, "查询日期还没有开始");
-        if (action.startsWith("sleep_")) return sleep(db, action, date, start, end, zone);
+        long dayStart = day.atStartOfDay(zid).toEpochSecond();
+        long dayEnd = day.plusDays(1).atStartOfDay(zid).toEpochSecond();
+        long[] window = window(request, dayStart, dayEnd);
+        long start = window[0], end = window[1];
+        if (dayStart >= now / 1000L) return missing(action, date, zone, "查询日期还没有开始");
+        if (action.startsWith("sleep_")) return sleep(db, action, date, start, end, has(request, "start_time") || end < dayEnd, zone);
         Metric metric = Metric.of(action);
         if (metric == null) throw new IllegalArgumentException("未知查询类型");
         return vitals(db, action, metric, date, start, end, zone);
+    }
+
+    private static boolean has(JSONObject request, String key) {
+        String value = request.optString(key, "").trim();
+        return !value.isEmpty();
+    }
+
+    private static long[] window(JSONObject request, long dayStart, long dayEnd) {
+        String from = request.optString("start_time", "").trim();
+        String to = request.optString("end_time", "").trim();
+        long start = from.isEmpty() ? dayStart : dayStart + clock(from, "start_time");
+        long end = to.isEmpty() ? dayEnd : dayStart + clock(to, "end_time");
+        if (end > dayEnd) end = dayEnd;
+        if (start < dayStart || start >= end) throw new IllegalArgumentException("时间段必须在当天且开始早于结束");
+        return new long[]{start, end};
+    }
+
+    private static int clock(String value, String name) {
+        try {
+            String[] parts = value.split(":");
+            if (parts.length < 2 || parts.length > 3) throw new IllegalArgumentException(name + " 必须是 HH:mm");
+            int hour = Integer.parseInt(parts[0]);
+            int minute = Integer.parseInt(parts[1]);
+            int second = parts.length == 3 ? Integer.parseInt(parts[2]) : 0;
+            if (hour == 24 && minute == 0 && second == 0) return 86400;
+            if (hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59)
+                throw new IllegalArgumentException(name + " 必须是 HH:mm");
+            return hour * 3600 + minute * 60 + second;
+        } catch (IllegalArgumentException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IllegalArgumentException(name + " 必须是 HH:mm");
+        }
+    }
+
+    private static JSONObject rangeSummary(HealthSource.Reader db, String action, JSONObject request, long now, TimeZone zone) throws Exception {
+        LocalDate from = date(request.optString("start_date", ""), now, zone);
+        LocalDate to = date(request.optString("end_date", ""), now, zone);
+        if (to.isBefore(from)) throw new IllegalArgumentException("end_date 不能早于 start_date");
+        if (to.toEpochDay() - from.toEpochDay() + 1 > 31) throw new IllegalArgumentException("概括范围最多31天");
+        JSONArray days = new JSONArray();
+        boolean any = false;
+        for (LocalDate day = from; !day.isAfter(to); day = day.plusDays(1)) {
+            JSONObject dayRequest = new JSONObject(request.toString());
+            dayRequest.remove("start_date");
+            dayRequest.remove("end_date");
+            dayRequest.put("date", day.toString());
+            JSONObject result = query(db, dayRequest, now, zone, null);
+            days.put(result);
+            any |= "ok".equals(result.optString("status"));
+        }
+        return new JSONObject().put("status", any ? "ok" : "missing").put("action", action)
+                .put("start_date", from.toString()).put("end_date", to.toString())
+                .put("timezone", zone.getID()).put("count", days.length()).put("days", days);
     }
 
     private static LocalDate date(String value, long now, TimeZone zone) {
@@ -225,11 +283,11 @@ final class HealthQuery {
         return "运动";
     }
 
-    private static JSONObject sleep(HealthSource.Reader db, String action, String date, long start, long end, TimeZone zone) throws Exception {
+    private static JSONObject sleep(HealthSource.Reader db, String action, String date, long start, long end, boolean timeWindow, TimeZone zone) throws Exception {
         boolean detail = "sleep_detail".equals(action);
         JSONArray rows = db.query("SELECT value,time,0 AS updateTime,endTime,sid,key FROM sleep_segment "
-                + "WHERE isDeleted=0 AND key='sleep' AND endTime>? AND endTime<=? ORDER BY endTime ASC LIMIT " + (MAX_SESSIONS + 1),
-                new String[]{Long.toString(start), Long.toString(end)});
+                + "WHERE isDeleted=0 AND key='sleep' AND endTime>? ORDER BY endTime ASC LIMIT " + (MAX_SESSIONS + 1),
+                new String[]{Long.toString(start)});
         if (rows == null || rows.length() > MAX_SESSIONS) throw new IllegalArgumentException("睡眠记录过多");
         List<long[]> heart = points(db, "hr_record", "key IN ('heart_rate','single_heart_rate')", "bpm", start, end, 1, 300);
         List<long[]> oxygen = points(db, "spo2_record", "key IN ('spo2','single_spo2')", "spo2", start, end, 1, 100);
@@ -239,10 +297,11 @@ final class HealthQuery {
             try {
                 JSONObject row = rows.getJSONObject(i), raw = new JSONObject(row.getString("value"));
                 long bed = number(raw, "bedtime"), wake = number(raw, "wake_up_time");
-                if (bed <= 0 || wake <= bed || wake > end || wake < start) continue;
+                if (bed <= 0 || wake <= bed || wake <= start || bed >= end) continue;
                 String signature = bed + ":" + wake + ":" + String.valueOf(raw.opt("items")) + ":" + String.valueOf(raw.opt("sleepSegments"));
                 if (!seen.add(signature)) continue;
-                JSONObject session = session(raw, bed, wake, detail, heart, oxygen, zone);
+                JSONObject session = session(raw, bed, wake, timeWindow ? start : Math.min(start, bed), end, detail, heart, oxygen, zone);
+                if (detail && session.getJSONArray("segments").length() == 0) continue;
                 sessions.put(wake + (sessions.containsKey(wake) ? 1 : 0), session);
             } catch (Exception ignored) { }
         }
@@ -260,10 +319,19 @@ final class HealthQuery {
                 .put("timezone", zone.getID()).put("mode", detail ? "detail" : "summary")
                 .put("sessions", out).put("totals", new JSONObject().put("total_minutes", total)
                         .put("deep_minutes", deep).put("light_minutes", light).put("rem_minutes", rem).put("awake_minutes", awake));
+        if (detail) {
+            JSONArray all = new JSONArray();
+            for (JSONObject session : sessions.values()) {
+                JSONArray segments = session.optJSONArray("segments");
+                for (int i = 0; segments != null && i < segments.length(); i++) all.put(segments.getJSONObject(i));
+            }
+            result.put("segments", all);
+        }
         return result;
     }
 
-    private static JSONObject session(JSONObject raw, long bed, long wake, boolean detail, List<long[]> heart, List<long[]> oxygen, TimeZone zone) throws Exception {
+    private static JSONObject session(JSONObject raw, long bed, long wake, long windowStart, long windowEnd,
+                                      boolean detail, List<long[]> heart, List<long[]> oxygen, TimeZone zone) throws Exception {
         JSONArray items = null;
         for (String key : SLEEP_KEYS) { if (raw.optJSONArray(key) != null) { items = raw.getJSONArray(key); break; } }
         JSONArray segments = new JSONArray();
@@ -274,7 +342,10 @@ final class HealthQuery {
             for (int i = 0; i < items.length(); i++) {
                 JSONObject item = items.optJSONObject(i); if (item == null) continue;
                 long s = number(item, "start_time"), e = number(item, "end_time");
-                if (s < bed || e > wake || e <= s) continue;
+                if (s < bed || e > wake || e <= s || e <= windowStart || s >= windowEnd) continue;
+                s = Math.max(s, windowStart);
+                e = Math.min(e, windowEnd);
+                if (e <= s) continue;
                 String stage = stage(item.opt("state"));
                 long minutes = Math.round((e - s) / 60.0);
                 stages = true;
@@ -282,7 +353,8 @@ final class HealthQuery {
                 else if ("rem".equals(stage)) rem += minutes; else if ("awake".equals(stage)) awake += minutes;
                 if (detail) {
                     JSONObject segment = new JSONObject().put("start", iso(s, zone)).put("end", iso(e, zone))
-                            .put("stage", stage).put("duration_minutes", minutes);
+                            .put("start_epoch_seconds", s).put("end_epoch_seconds", e)
+                            .put("stage", stage).put("stage_label", stageLabel(stage)).put("duration_minutes", minutes);
                     JSONObject hr = range(heart, s, e, "min", "max");
                     JSONObject sp = range(oxygen, s, e, "min", "max");
                     segment.put("heart_rate", hr == null ? JSONObject.NULL : hr);
@@ -364,10 +436,19 @@ final class HealthQuery {
     }
 
     private static JSONObject range(List<long[]> points, long start, long end, String minKey, String maxKey) throws Exception {
-        long min = Long.MAX_VALUE, max = Long.MIN_VALUE;
-        for (long[] p : points) if (p[0] > start && p[0] <= end) { min = Math.min(min, p[1]); max = Math.max(max, p[1]); }
-        if (min == Long.MAX_VALUE) return null;
-        return new JSONObject().put(minKey, min).put(maxKey, max);
+        long min = Long.MAX_VALUE, max = Long.MIN_VALUE, minAt = 0, maxAt = 0;
+        int count = 0;
+        for (long[] p : points) {
+            if (p[0] < start || p[0] > end) continue;
+            if (p[1] < min) { min = p[1]; minAt = p[0]; }
+            if (p[1] > max) { max = p[1]; maxAt = p[0]; }
+            count++;
+        }
+        if (count == 0) return null;
+        return new JSONObject().put(minKey, min).put(maxKey, max)
+                .put("start_epoch_seconds", start).put("end_epoch_seconds", end)
+                .put("min_at_epoch_seconds", minAt).put("max_at_epoch_seconds", maxAt)
+                .put("count", count);
     }
 
     private static long number(JSONObject object, String key) {
@@ -385,6 +466,14 @@ final class HealthQuery {
         if (s == 4) return "rem";
         if (s == 5) return "awake";
         return "unknown";
+    }
+
+    private static String stageLabel(String stage) {
+        if ("deep".equals(stage)) return "深睡";
+        if ("light".equals(stage)) return "浅睡";
+        if ("rem".equals(stage)) return "快速眼动";
+        if ("awake".equals(stage)) return "清醒";
+        return "未知";
     }
 
     private static String iso(long second, TimeZone zone) {

@@ -100,12 +100,12 @@ public final class MainActivity extends Activity {
                     refresh();
                 }).show());
         autoPull = new CheckBox(this);
-        autoPull.setText("每小时自动请求模块刷新数据库（不自动打开应用）");
+        autoPull.setText("自动同步（天气 30 分钟，运动健康 10 分钟；失效时拉起对应应用）");
         autoPull.setChecked(getSharedPreferences("monitor", 0).getBoolean("auto_pull", true));
         autoPull.setOnCheckedChangeListener((v, checked) ->
                 getSharedPreferences("monitor", 0).edit().putBoolean("auto_pull", checked).commit());
         layout.addView(autoPull);
-        text("后台服务每小时只请求已连接模块刷新健康数据库，不自动打开天气/健康；模块未连接时保留上一次数据。需要首次授权或模块掉线时，手动点“立即拉起天气和健康”。", 14);
+        text("天气每 30 分钟刷新，运动健康每 10 分钟请求一次（包含手环同步机会）；对应模块未连接时只拉起该应用，拉起失败就保留上一次数据。", 14);
         preferShizuku = new CheckBox(this);
         preferShizuku.setText("优先使用 Shizuku 拉起（备用通道）");
         preferShizuku.setChecked(getSharedPreferences("monitor", 0).getBoolean("prefer_shizuku", false));

@@ -24,18 +24,21 @@ public final class MonitorService extends Service {
  private int boot;
  private long offStart=-1,lastRetry=-1;
  private boolean uploading;
- private boolean hourlyRefreshing;
+ private boolean weatherSyncing;
+ private boolean healthSyncing;
  public static LinkServer current(){return link;}
  public static boolean serviceRunning(){return serviceRunning;}
  public static String status(Context c){
   SharedPreferences settings=c.getSharedPreferences("monitor",0);String error=settings.getString("error","");
   String linkError=settings.getString("link_error","");
   String pullError=settings.getString("pull_error","");
-  String hourly=settings.getString("hourly_status","");
+  String weather=settings.getString("weather_sync_status","");
+  String health=settings.getString("health_sync_status","");
   return settings.getString("status","监控未启动")+(error.isEmpty()?"":"\n最近自动事件提示："+error)
    +(linkError.isEmpty()?"":"\n数据连接："+linkError)
    +(pullError.isEmpty()?"":"\n自动拉起："+pullError)
-   +(hourly.isEmpty()?"":"\n每小时同步："+hourly);
+   +(weather.isEmpty()?"":"\n天气同步："+weather)
+   +(health.isEmpty()?"":"\n健康同步："+health);
  }
  public static void refresh(Context c){
   if(current()==null)return;
@@ -103,25 +106,7 @@ public final class MonitorService extends Service {
     }
   }
   checkpoint(state,now,wall,active,open).commit();
-  long lastHourly=p.getLong("last_hourly_wall",0);
-  if(lastHourly<=0)p.edit().putLong("last_hourly_wall",wall).apply();
-  else if(p.getBoolean("auto_pull",true)&&PendingAutomatic.hourlyDue(lastHourly,wall)&&!hourlyRefreshing){
-   // Refresh the local snapshots only. Automatic sending still uses the original long-idle trigger.
-   if(p.edit().putLong("last_hourly_wall",wall).commit()){
-    hourlyRefreshing=true;final long hourlyAt=wall;
-    net.execute(()->{
-     try{
-      LinkServer server=link;
-      boolean synced=server!=null&&server.status("health").connected;
-      if(synced)server.query("health",new org.json.JSONObject().put("action","sync_database"),5_000);
-      p.edit().putString("hourly_status",synced?"每小时已请求健康模块刷新数据库（未发送）":"健康模块未连接，保留上一次数据")
-       .putLong("hourly_at",hourlyAt).apply();
-     }catch(Exception e){
-      p.edit().putString("hourly_status","每小时同步失败："+e.getClass().getSimpleName()).putLong("hourly_at",hourlyAt).apply();
-     }finally{h.post(()->hourlyRefreshing=false);}
-    });
-   }
-  }
+  syncDue(wall);
   p.edit().putString("status",(active?(open?"已解锁亮屏":"亮屏锁定"):"息屏")+" · "+(state.isArmed()?"待触发，连续使用 "+(state.useMillis(now)/1000)+" 秒":"等待连续息屏超过3小时")).apply();
   boolean expired=false;
    if(!uploading&&!p.getString("pending_auto","").isEmpty()&&PendingAutomatic.expired(p.getLong("pending_created_wall",-1),wall)){
@@ -136,6 +121,39 @@ public final class MonitorService extends Service {
     finally{h.post(()->uploading=false);}
    });
   }
+ }
+ private void syncDue(long wall){
+  if(!p.getBoolean("auto_pull",true))return;
+  long lastWeather=p.getLong("last_weather_sync_wall",0);
+  if(lastWeather<=0)p.edit().putLong("last_weather_sync_wall",wall).apply();
+  else if(SyncSchedule.due(lastWeather,wall,SyncSchedule.WEATHER_MS)&&!weatherSyncing){
+   if(p.edit().putLong("last_weather_sync_wall",wall).commit()){
+    weatherSyncing=true;final long at=wall;
+    net.execute(()->syncKind("weather",at));
+   }
+  }
+  long lastHealth=p.getLong("last_health_sync_wall",0);
+  if(lastHealth<=0)p.edit().putLong("last_health_sync_wall",wall).apply();
+  else if(SyncSchedule.due(lastHealth,wall,SyncSchedule.HEALTH_MS)&&!healthSyncing){
+   if(p.edit().putLong("last_health_sync_wall",wall).commit()){
+    healthSyncing=true;final long at=wall;
+    net.execute(()->syncKind("health",at));
+   }
+  }
+ }
+ private void syncKind(String kind,long at){
+  boolean connected=false;
+  try{
+   LinkServer server=link;
+   if(server==null)throw new IllegalStateException("数据连接未启动");
+   connected=server.status(kind).connected;
+   if(!connected)connected=TargetRecovery.ensureKind(this,server,kind,20_000);
+   if(connected&&"health".equals(kind))server.query("health",new org.json.JSONObject().put("action","sync_database"),10_000);
+   p.edit().putString(kind+"_sync_status",connected?("已同步 "+(kind.equals("health")?"10":"30")+" 分钟周期"):"模块未连接，已尝试拉起但失败")
+    .putLong(kind+"_synced_at",at).apply();
+  }catch(Exception e){
+   p.edit().putString(kind+"_sync_status","同步失败："+e.getClass().getSimpleName()).putLong(kind+"_synced_at",at).apply();
+  }finally{h.post(()->{if("weather".equals(kind))weatherSyncing=false;else healthSyncing=false;});}
  }
  private final Runnable tick=new Runnable(){public void run(){if(p.getBoolean("enabled",false)){sample();h.postDelayed(this,2000);}}};
  private final BroadcastReceiver screen=new BroadcastReceiver(){public void onReceive(Context c,Intent i){sample();}};

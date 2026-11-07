@@ -180,7 +180,7 @@ public final class McpServer {
     private static JSONArray tools() throws Exception {
         return new JSONArray().put(new JSONObject()
                 .put("name", "health")
-                .put("description", "查询小米运动健康的睡眠、心率、压力、血氧和运动数据；用 action 选择类型，日期按 Asia/Shanghai")
+                .put("description", "查询小米运动健康的睡眠、心率、压力、血氧和运动数据；概括用 date 查一天或用 start_date/end_date 查范围，详细用 date + start_time/end_time 查时段")
                 .put("inputSchema", new JSONObject()
                         .put("type", "object")
                         .put("properties", new JSONObject()
@@ -190,9 +190,13 @@ public final class McpServer {
                                 .put("date", new JSONObject().put("type", "string")
                                         .put("description", "某一天 YYYY-MM-DD；睡眠和三项指标使用，省略为今天"))
                                 .put("start_date", new JSONObject().put("type", "string")
-                                        .put("description", "运动记录开始日期 YYYY-MM-DD，默认今天"))
+                                        .put("description", "概括开始日期 YYYY-MM-DD；和 end_date 一起按天返回"))
                                 .put("end_date", new JSONObject().put("type", "string")
-                                        .put("description", "运动记录结束日期 YYYY-MM-DD（含），最多31天"))
+                                        .put("description", "概括结束日期 YYYY-MM-DD（含），最多31天"))
+                                .put("start_time", new JSONObject().put("type", "string")
+                                        .put("description", "详细查询当天开始时间 HH:mm；省略为00:00"))
+                                .put("end_time", new JSONObject().put("type", "string")
+                                        .put("description", "详细查询当天结束时间 HH:mm；省略为24:00"))
                                 .put("id", new JSONObject().put("type", "string")
                                         .put("description", "运动 ID：开始时间:结束时间:运动类型；exercise_detail 必填")))
                         .put("required", new JSONArray().put("action"))
@@ -206,14 +210,14 @@ public final class McpServer {
     }
 
     private enum Action {
-        SLEEP_SUMMARY("sleep_summary", "sleep_summary", "某一天睡眠概括：入睡/醒来、总睡眠、各阶段时长、心率/血氧范围"),
-        SLEEP_DETAIL("sleep_detail", "sleep_detail", "某一天全部睡眠段和阶段段，一次打包返回；每段含起止、阶段、心率/血氧范围"),
-        HEART_SUMMARY("heart_rate_summary", "heart_rate_summary", "某一天心率概括：范围、平均值、采样数"),
+        SLEEP_SUMMARY("sleep_summary", "sleep_summary", "睡眠概括：用 date 查某一天，或用 start_date/end_date 按天返回；含入睡/醒来、总睡眠、各阶段时长、心率/血氧范围"),
+        SLEEP_DETAIL("sleep_detail", "sleep_detail", "睡眠详细：每个阶段转折单独一段，含起止时间、阶段、心率/血氧及其时间范围；可用 start_time/end_time 限定当天时段"),
+        HEART_SUMMARY("heart_rate_summary", "heart_rate_summary", "心率概括：用 date 查某一天，或用 start_date/end_date 按天返回；含范围、平均值、采样数"),
         HEART_DETAIL("heart_rate_detail", "heart_rate_detail", "某一天心率明细：每 15 分钟的最小-最大范围"),
-        STRESS_SUMMARY("stress_summary", "stress_summary", "某一天压力概括：范围、平均值、采样数"),
-        STRESS_DETAIL("stress_detail", "stress_detail", "某一天压力明细：每 15 分钟的最小-最大范围"),
-        SPO2_SUMMARY("spo2_summary", "spo2_summary", "某一天血氧概括：范围、平均值、采样数"),
-        SPO2_DETAIL("spo2_detail", "spo2_detail", "某一天血氧明细：每 15 分钟的最小-最大范围"),
+        STRESS_SUMMARY("stress_summary", "stress_summary", "压力概括：用 date 查某一天，或用 start_date/end_date 按天返回；含范围、平均值、采样数"),
+        STRESS_DETAIL("stress_detail", "stress_detail", "压力明细：每 15 分钟的最小-最大范围；可用 start_time/end_time 限定当天时段"),
+        SPO2_SUMMARY("spo2_summary", "spo2_summary", "血氧概括：用 date 查某一天，或用 start_date/end_date 按天返回；含范围、平均值、采样数"),
+        SPO2_DETAIL("spo2_detail", "spo2_detail", "血氧明细：每 15 分钟的最小-最大范围；可用 start_time/end_time 限定当天时段"),
         EXERCISE_RECORDS("exercise_records", "exercise_records", "查询某个时间段的运动记录摘要，返回运动 ID、配速、步频、步幅、心率区段"),
         EXERCISE_DETAIL("exercise_detail", "exercise_detail", "按运动 ID 返回完整摘要、心率区段以及逐秒心率/步频/步幅/配速/距离/卡路里/步数");
         final String action, name, description;
@@ -232,7 +236,15 @@ public final class McpServer {
                 required.put("id");
             } else {
                 properties.put("date", new JSONObject().put("type", "string")
-                        .put("description", "日期 YYYY-MM-DD，按 Asia/Shanghai；省略为今天"));
+                        .put("description", "具体日期 YYYY-MM-DD；省略为今天"))
+                        .put("start_date", new JSONObject().put("type", "string")
+                                .put("description", "概括开始日期 YYYY-MM-DD；和 end_date 一起使用时按天返回"))
+                        .put("end_date", new JSONObject().put("type", "string")
+                                .put("description", "概括结束日期 YYYY-MM-DD（含），最多31天"))
+                        .put("start_time", new JSONObject().put("type", "string")
+                                .put("description", "详细查询当天开始时间 HH:mm；省略为00:00"))
+                        .put("end_time", new JSONObject().put("type", "string")
+                                .put("description", "详细查询当天结束时间 HH:mm；省略为24:00"));
             }
             JSONObject schema = new JSONObject().put("type", "object").put("properties", properties)
                     .put("additionalProperties", false);
@@ -253,10 +265,23 @@ public final class McpServer {
             if (!"ok".equals(data.optString("status"))) return data.optString("date", data.optString("start_date", "")) + "：" + data.optString("reason", "没有数据");
             String action = data.optString("action", "");
             try {
+                JSONArray days = data.optJSONArray("days");
+                if (days != null) return days(data, days);
                 if (action.startsWith("sleep_")) return sleep(data, action.endsWith("detail"));
                 if (action.startsWith("exercise_")) return exercise(data, action.endsWith("detail"));
                 return vitals(data);
             } catch (Exception e) { return "数据格式不完整"; }
+        }
+
+        private static String days(JSONObject data, JSONArray days) throws Exception {
+            StringBuilder out = new StringBuilder(data.optString("action")).append(' ')
+                    .append(data.optString("start_date")).append("～").append(data.optString("end_date"))
+                    .append("（").append(data.optString("timezone")).append("）\n");
+            for (int i = 0; i < days.length(); i++) {
+                JSONObject day = days.getJSONObject(i);
+                out.append(render(day)).append('\n');
+            }
+            return out.toString();
         }
 
         private static String exercise(JSONObject data, boolean detail) throws Exception {
@@ -369,13 +394,14 @@ public final class McpServer {
         }
 
         private static String sleep(JSONObject data, boolean detail) throws Exception {
-            StringBuilder out = new StringBuilder(data.optString("date")).append(" 睡眠").append(detail ? "详细" : "概括")
+            if (detail) return sleepDetail(data);
+            StringBuilder out = new StringBuilder(data.optString("date")).append(" 睡眠概括")
                     .append("（").append(data.optString("timezone")).append("）\n");
             JSONArray sessions = data.optJSONArray("sessions");
             if (sessions == null) return out.append("没有睡眠段").toString();
             for (int i = 0; i < sessions.length(); i++) {
                 JSONObject session = sessions.getJSONObject(i);
-                out.append("睡眠段 ").append(i + 1).append("：").append(clock(session.optString("start")))
+                out.append("睡眠会话 ").append(i + 1).append("：").append(clock(session.optString("start")))
                         .append("～").append(clock(session.optString("end"))).append("（共").append(duration(session.optLong("total_minutes"))).append("）\n");
                 JSONObject summary = session.optJSONObject("summary");
                 if (summary != null) {
@@ -410,6 +436,56 @@ public final class McpServer {
                         .append("；深睡 ").append(duration(totals.optLong("deep_minutes"))).append('\n');
             }
             return out.toString();
+        }
+
+        private static String sleepDetail(JSONObject data) throws Exception {
+            StringBuilder out = new StringBuilder(data.optString("date")).append(" 睡眠详细（")
+                    .append(data.optString("timezone")).append("）\n");
+            JSONArray segments = data.optJSONArray("segments");
+            if (segments == null) {
+                segments = new JSONArray();
+                JSONArray sessions = data.optJSONArray("sessions");
+                for (int i = 0; sessions != null && i < sessions.length(); i++) {
+                    JSONArray nested = sessions.getJSONObject(i).optJSONArray("segments");
+                    for (int j = 0; nested != null && j < nested.length(); j++) segments.put(nested.getJSONObject(j));
+                }
+            }
+            if (segments.length() == 0) return out.append("没有睡眠段").toString();
+            String zone = data.optString("timezone");
+            for (int i = 0; i < segments.length(); i++) {
+                JSONObject segment = segments.getJSONObject(i);
+                out.append("睡眠段 ").append(i + 1).append("：")
+                        .append(stamp(segment.optString("start"))).append("～").append(stamp(segment.optString("end")))
+                        .append("（").append(stage(segment.optString("stage"))).append("，")
+                        .append(duration(segment.optLong("duration_minutes"))).append("）\n");
+                out.append("开始：").append(segment.optString("start")).append("；结束：").append(segment.optString("end")).append('\n');
+                JSONObject hr = segment.optJSONObject("heart_rate");
+                if (hr != null) out.append("心率：").append(hr.optInt("min")).append('-').append(hr.optInt("max"))
+                        .append(" 次/分；采样 ").append(hr.optInt("count"))
+                        .append("；范围 ").append(segment.optString("start")).append("～").append(segment.optString("end"))
+                        .append("；最低 ").append(clock(at(hr.optLong("min_at_epoch_seconds"), zone)))
+                        .append("；最高 ").append(clock(at(hr.optLong("max_at_epoch_seconds"), zone))).append('\n');
+                else out.append("心率：无采样\n");
+                JSONObject sp = segment.optJSONObject("spo2");
+                if (sp != null) out.append("血氧：").append(sp.optInt("min")).append('-').append(sp.optInt("max"))
+                        .append("%；采样 ").append(sp.optInt("count"))
+                        .append("；范围 ").append(segment.optString("start")).append("～").append(segment.optString("end"))
+                        .append("；最低 ").append(clock(at(sp.optLong("min_at_epoch_seconds"), zone)))
+                        .append("；最高 ").append(clock(at(sp.optLong("max_at_epoch_seconds"), zone))).append('\n');
+                else out.append("血氧：无采样\n");
+            }
+            JSONObject totals = data.optJSONObject("totals");
+            if (totals != null) out.append("合计：总睡眠 ").append(duration(totals.optLong("total_minutes")))
+                    .append("；清醒 ").append(duration(totals.optLong("awake_minutes")))
+                    .append("；快速眼动 ").append(duration(totals.optLong("rem_minutes")))
+                    .append("；浅睡 ").append(duration(totals.optLong("light_minutes")))
+                    .append("；深睡 ").append(duration(totals.optLong("deep_minutes"))).append('\n');
+            return out.toString();
+        }
+
+        private static String at(long epoch, String zone) {
+            try { return Instant.ofEpochSecond(epoch).atZone(ZoneId.of(zone)).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME); }
+            catch (Exception e) { return ""; }
         }
 
         private static String vitals(JSONObject data) throws Exception {

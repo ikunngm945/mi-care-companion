@@ -49,6 +49,20 @@ final class TargetRecovery {
                 && (!health || server.status("health").connected);
     }
 
+    /** Ensures one module is connected; launches only that target when it is unavailable. */
+    static boolean ensureKind(Context context, LinkServer server, String kind, long timeoutMs) {
+        if (server == null) return false;
+        if (server.status(kind).connected) return true;
+        if (!root(context) && !ShizukuShell.granted()) return false;
+        if (!launchNowSync(context, kind)) return false;
+        long deadline = SystemClock.elapsedRealtime() + Math.max(0, timeoutMs);
+        while (SystemClock.elapsedRealtime() < deadline) {
+            if (server.status(kind).connected) return true;
+            try { Thread.sleep(500); } catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
+        }
+        return server.status(kind).connected;
+    }
+
     static boolean launchNowSync(Context context, String kind) {
         try {
             if (!root(context) && !ShizukuShell.granted()) return false;

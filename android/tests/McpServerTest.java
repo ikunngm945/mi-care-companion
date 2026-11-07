@@ -29,7 +29,7 @@ public final class McpServerTest {
                         .put("heart_rate_zones", new JSONObject().put("warmup_seconds", 0)
                                 .put("fat_burn_seconds", 54).put("aerobic_seconds", 408)
                                 .put("anaerobic_seconds", 0).put("extreme_seconds", 0))));
-        McpServer server = new McpServer(17892, "abcdefghijklmnop", request -> {
+        McpServer server = new McpServer(17992, "abcdefghijklmnop", request -> {
             String action = request.optString("action");
             return action.startsWith("exercise_") ? exercise : data;
         });
@@ -54,7 +54,7 @@ public final class McpServerTest {
     }
 
     private static String request(String token, String body) throws Exception {
-        try (Socket socket = new Socket("127.0.0.1", 17892)) {
+        try (Socket socket = new Socket("127.0.0.1", 17992)) {
             socket.setSoTimeout(5000);
             byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
             String headers = "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n"

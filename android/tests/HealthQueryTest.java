@@ -71,10 +71,32 @@ public final class HealthQueryTest {
         check(rem.getJSONObject("spo2").getInt("min") == 97, "segment SpO2 range");
         JSONObject awake = session.getJSONArray("segments").getJSONObject(1);
         check("awake".equals(awake.getString("stage")) && awake.isNull("heart_rate") && awake.isNull("spo2"), "missing segment ranges are null");
+        check(rem.getLong("start_epoch_seconds") == BED + 2 * 3600 + 39 * 60, "segment start epoch");
+        check(rem.getLong("end_epoch_seconds") == BED + 2 * 3600 + 59 * 60, "segment end epoch");
+        JSONObject remHr = rem.getJSONObject("heart_rate");
+        check(remHr.getLong("start_epoch_seconds") == BED + 2 * 3600 + 39 * 60, "HR window start");
+        check(remHr.getLong("end_epoch_seconds") == BED + 2 * 3600 + 59 * 60, "HR window end");
+        check(remHr.getLong("min_at_epoch_seconds") == BED + 2 * 3600 + 45 * 60, "HR min time");
+
+        JSONObject window = HealthQuery.query(reader(), new JSONObject().put("action", "sleep_detail")
+                        .put("date", "2026-10-31").put("start_time", "01:49").put("end_time", "02:20"),
+                (DAY + 86400) * 1000, TimeZone.getTimeZone(ZONE));
+        JSONObject windowSession = window.getJSONArray("sessions").getJSONObject(0);
+        check(windowSession.getJSONArray("segments").length() == 2, "time window filters sleep segments");
+
+        JSONObject endOfDay = HealthQuery.query(reader(), new JSONObject().put("action", "sleep_detail")
+                        .put("date", "2026-10-31").put("end_time", "24:00"),
+                (DAY + 86400) * 1000, TimeZone.getTimeZone(ZONE));
+        check(endOfDay.getJSONArray("sessions").length() == 1, "24:00 is the end of the day");
 
         JSONObject summary = HealthQuery.query(reader(), new JSONObject().put("action", "sleep_summary").put("date", "2026-10-31"),
                 (DAY + 86400) * 1000, TimeZone.getTimeZone(ZONE));
         check(!summary.getJSONArray("sessions").getJSONObject(0).has("segments"), "summary omits segments");
+
+        JSONObject ranged = HealthQuery.query(reader(), new JSONObject().put("action", "sleep_summary")
+                        .put("start_date", "2026-10-31").put("end_date", "2026-11-01"),
+                (DAY + 86400) * 1000, TimeZone.getTimeZone(ZONE));
+        check("ok".equals(ranged.getString("status")) && ranged.getJSONArray("days").length() == 2, "range summary days");
 
         long hrAt = DAY + 8 * 3600 + 2 * 60;
         HealthSource.Reader vital = (sql, bound) -> sql.contains("FROM hr_record")
