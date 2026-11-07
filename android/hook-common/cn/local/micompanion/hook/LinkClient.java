@@ -77,6 +77,7 @@ public final class LinkClient {
     private volatile long delivered;
     private volatile JSONObject pending;
     private volatile QueryHandler queryHandler;
+    private volatile Runnable connectedHandler;
 
     private LinkClient(Context context, String kind) {
         this.context = context;
@@ -126,6 +127,21 @@ public final class LinkClient {
     }
 
     public void setQueryHandler(QueryHandler handler) { queryHandler = handler; }
+    public void setConnectedHandler(Runnable handler) { connectedHandler = handler; }
+
+    /** Sends one protocol message immediately; returns false while disconnected. */
+    public boolean sendMessage(JSONObject message) {
+        if (message == null || !connected) return false;
+        try {
+            writeRaw(LinkProtocol.frame(LinkProtocol.OP_TEXT,
+                    message.toString().getBytes(StandardCharsets.UTF_8), true, random));
+            return true;
+        } catch (Exception e) {
+            error = "发送失败";
+            close();
+            return false;
+        }
+    }
 
     public Status status() {
         return new Status(state, connected, lastHeartbeatAt, authFailures, error, delivered);
@@ -148,8 +164,10 @@ public final class LinkClient {
                 readLoop();
             } catch (AuthFailure e) {
                 authFailures++;
-                state = "鉴权失败";
-                error = "Token 不匹配";
+                state = "token 已过期";
+                error = "token 已过期";
+                if (authFailures == 1) new android.os.Handler(android.os.Looper.getMainLooper()).post(() ->
+                        android.widget.Toast.makeText(context, "token 已过期", android.widget.Toast.LENGTH_LONG).show());
                 sleep(5000);
             } catch (Exception e) {
                 if (running.get()) {
@@ -204,6 +222,8 @@ public final class LinkClient {
             state = "已连接";
             lastHeartbeatAt = SystemClock.elapsedRealtime();
             Log.i(TAG, kind + " connected");
+            Runnable handler = connectedHandler;
+            if (handler != null) handler.run();
         } catch (Exception e) {
             try { fresh.close(); } catch (IOException ignored) { }
             throw e;

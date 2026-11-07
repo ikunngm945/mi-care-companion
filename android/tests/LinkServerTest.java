@@ -103,9 +103,14 @@ public final class LinkServerTest {
 
         authRejects(port, "Zz9Yy8Xx7Ww6Vv5U", "weather", " 401");
         authRejects(port, "short", "weather", " 401");
+        check("token 已过期".equals(server.status("weather").lastError), "鉴权失败须明确显示 token 已过期");
+        // A null context would fail if recovery accessed preferences or attempted a launch.
+        check(!TargetRecovery.ensureForSend(null, server, 0), "Token 过期时不得进入自动拉起流程");
         authRejects(port, TOKEN, "unknown", " 400");
 
         try (Client weather = authorized(port, "weather")) {
+            check(server.status("weather").authFailures == 0, "正确 Token 重连应清除鉴权失败状态");
+            check(server.status("weather").lastError.isEmpty(), "正确 Token 重连应清除失效提示");
             JSONObject snapshot = snapshot("com.miui.weather2", "ok");
             weather.send(new JSONObject().put("type", "snapshot").put("snapshot", snapshot));
             JSONObject ack = weather.json();

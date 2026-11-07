@@ -26,6 +26,8 @@ final class TargetRecovery {
     /** Called only when an automatic event is about to be sent. */
     static boolean ensureForSend(Context context, LinkServer server, long timeoutMs) {
         if (server == null) return false;
+        if (server.status("weather").authFailures > 0
+                || server.status("health").authFailures > 0) return false;
         SharedPreferences prefs = prefs(context);
         if (server.status("weather").connected) prefs.edit().putBoolean("seen_weather", true).apply();
         if (server.status("health").connected) prefs.edit().putBoolean("seen_health", true).apply();
@@ -47,20 +49,6 @@ final class TargetRecovery {
     private static boolean connected(LinkServer server, boolean weather, boolean health) {
         return (!weather || server.status("weather").connected)
                 && (!health || server.status("health").connected);
-    }
-
-    /** Ensures one module is connected; launches only that target when it is unavailable. */
-    static boolean ensureKind(Context context, LinkServer server, String kind, long timeoutMs) {
-        if (server == null) return false;
-        if (server.status(kind).connected) return true;
-        if (!root(context) && !ShizukuShell.granted()) return false;
-        if (!launchNowSync(context, kind)) return false;
-        long deadline = SystemClock.elapsedRealtime() + Math.max(0, timeoutMs);
-        while (SystemClock.elapsedRealtime() < deadline) {
-            if (server.status(kind).connected) return true;
-            try { Thread.sleep(500); } catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
-        }
-        return server.status(kind).connected;
     }
 
     static boolean launchNowSync(Context context, String kind) {

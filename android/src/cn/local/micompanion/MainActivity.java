@@ -38,7 +38,8 @@ public final class MainActivity extends Activity {
         @Override public void run() { updateLinkStatus(); linkHandler.postDelayed(this, 1000); }
     };
     private EditText url, key, umo, prompt, port;
-    private CheckBox http, autoPull, preferShizuku;
+    private CheckBox http, preferShizuku;
+    private boolean tokenExpiryShown;
     private Button test, check, save, retry, diagnostic, clear, restorePrompt;
     private TextView state, report, diagnosticsReport, tokenView, linkStatus, privilege;
     private boolean busy;
@@ -71,7 +72,7 @@ public final class MainActivity extends Activity {
         });
         button("重新生成 Token（两个模块都要重填）", v -> new AlertDialog.Builder(this)
                 .setTitle("重新生成 Token？")
-                .setMessage("现有连接会立即断开。天气和健康两个模块必须重新填入新 Token，否则会一直显示鉴权失败。")
+                .setMessage("现有连接会立即断开。天气和健康两个模块必须重新填入新 Token，否则会显示“token 已过期”。")
                 .setNegativeButton("取消", null)
                 .setPositiveButton("生成", (d, which) -> regenerateToken()).show());
         button("保存连接设置并重载服务", v -> {
@@ -99,13 +100,7 @@ public final class MainActivity extends Activity {
                     stopService(new Intent(this, MonitorService.class));
                     refresh();
                 }).show());
-        autoPull = new CheckBox(this);
-        autoPull.setText("自动同步（天气 30 分钟，运动健康 10 分钟；失效时拉起对应应用）");
-        autoPull.setChecked(getSharedPreferences("monitor", 0).getBoolean("auto_pull", true));
-        autoPull.setOnCheckedChangeListener((v, checked) ->
-                getSharedPreferences("monitor", 0).edit().putBoolean("auto_pull", checked).commit());
-        layout.addView(autoPull);
-        text("天气每 30 分钟刷新，运动健康每 10 分钟请求一次（包含手环同步机会）；对应模块未连接时只拉起该应用，拉起失败就保留上一次数据。", 14);
+        text("不再定时同步或定时拉起应用。手动打开天气或运动健康后，模块连接成功会自动推送数据；普通掉线仅显示未连接，密钥鉴权失败显示“token 已过期”，不会因此自动拉起应用。", 14);
         preferShizuku = new CheckBox(this);
         preferShizuku.setText("优先使用 Shizuku 拉起（备用通道）");
         preferShizuku.setChecked(getSharedPreferences("monitor", 0).getBoolean("prefer_shizuku", false));
@@ -307,10 +302,14 @@ public final class MainActivity extends Activity {
         out.append("局域网：http://<手机局域网IP>:").append(McpServer.PORT).append("/mcp\n");
         if (!mcpError.isEmpty()) out.append("MCP 错误：").append(mcpError).append('\n');
         long now = System.nanoTime() / 1_000_000L; // LinkServer uses the same monotonic clock
+        boolean tokenExpired = false;
         for (String kind : new String[]{"weather", "health"}) {
             String name = "weather".equals(kind) ? "天气模块" : "健康模块";
             LinkServer.Status status = server == null ? null : server.status(kind);
-            if (status == null || !status.connected) {
+            if (status != null && status.authFailures > 0) {
+                tokenExpired = true;
+                out.append(name).append("：token 已过期\n");
+            } else if (status == null || !status.connected) {
                 out.append(name).append("：未连接");
                 if (status != null && !status.lastError.isEmpty()) out.append("（").append(status.lastError).append("）");
                 if (status != null && status.authFailures > 0) out.append(" · 鉴权失败 ").append(status.authFailures).append(" 次");
@@ -323,6 +322,9 @@ public final class MainActivity extends Activity {
             }
         }
         linkStatus.setText(out.toString());
+        if (tokenExpired && !tokenExpiryShown)
+            android.widget.Toast.makeText(this, "token 已过期", android.widget.Toast.LENGTH_LONG).show();
+        tokenExpiryShown = tokenExpired;
     }
     private void refresh() {
         if (state != null) state.setText("监控设置：" + (getSharedPreferences("monitor", 0).getBoolean("enabled", false) ? "启用" : "停用")

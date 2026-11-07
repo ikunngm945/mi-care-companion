@@ -36,6 +36,7 @@ public final class WeatherHook implements IXposedHookLoadPackage {
             @Override protected void afterHookedMethod(MethodHookParam param) {
                 target = (Context)param.thisObject;
                 client = LinkClient.shared(target, "weather");
+                client.setConnectedHandler(() -> worker.execute(WeatherHook::publish));
                 client.start();
                 if (!started) {
                     started = true;

@@ -34,19 +34,29 @@ public final class McpServer {
     private final int port;
     private final String token;
     private final Gateway gateway;
+    private final Gateway weatherGateway;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private volatile ServerSocket server;
     private volatile ExecutorService workers;
     private volatile String error = "";
 
     public McpServer(String token, Gateway gateway) {
-        this(PORT, token, gateway);
+        this(PORT, token, gateway, null);
+    }
+
+    public McpServer(String token, Gateway gateway, Gateway weatherGateway) {
+        this(PORT, token, gateway, weatherGateway);
     }
 
     McpServer(int port, String token, Gateway gateway) {
+        this(port, token, gateway, null);
+    }
+
+    McpServer(int port, String token, Gateway gateway, Gateway weatherGateway) {
         this.port = port;
         this.token = token == null ? "" : token;
         this.gateway = gateway;
+        this.weatherGateway = weatherGateway;
     }
 
     public boolean start() {
@@ -156,19 +166,31 @@ public final class McpServer {
 
     private JSONObject call(JSONObject params) throws Exception {
         if (params == null) throw new IllegalArgumentException("缺少 params");
-        if (!"health".equals(params.optString("name", ""))) throw new IllegalArgumentException("未知工具");
+        String name = params.optString("name", "");
         JSONObject arguments = params.optJSONObject("arguments");
-        if (arguments == null) throw new IllegalArgumentException("缺少 arguments");
-        Action action = Action.of(arguments.optString("action", ""));
-        if (action == null) throw new IllegalArgumentException("未知 action");
-        JSONObject request = new JSONObject(arguments.toString());
-        request.put("action", action.action);
+        if (arguments == null) {
+            if (!"weather".equals(name)) throw new IllegalArgumentException("缺少 arguments");
+            arguments = new JSONObject();
+        }
         JSONObject result = new JSONObject();
         try {
-            JSONObject data = gateway.query(request);
-            String text = View.render(data);
+            String text;
+            if ("weather".equals(name)) {
+                if (weatherGateway == null) throw new IllegalStateException("天气工具未配置");
+                JSONObject data = weatherGateway.query(arguments);
+                text = data == null ? "天气数据不可用" : data.optString("text", "天气数据不可用");
+                result.put("isError", data == null || !"ok".equals(data.optString("status")));
+            } else if ("health".equals(name)) {
+                Action action = Action.of(arguments.optString("action", ""));
+                if (action == null) throw new IllegalArgumentException("未知 action");
+                JSONObject request = new JSONObject(arguments.toString());
+                request.put("action", action.action);
+                text = View.render(gateway.query(request));
+                result.put("isError", false);
+            } else {
+                throw new IllegalArgumentException("未知工具");
+            }
             result.put("content", new JSONArray().put(new JSONObject().put("type", "text").put("text", text)));
-            result.put("isError", false);
         } catch (Exception e) {
             String reason = e.getMessage() == null ? "查询失败" : e.getMessage();
             result.put("content", new JSONArray().put(new JSONObject().put("type", "text").put("text", "查询失败：" + reason)));
@@ -200,7 +222,14 @@ public final class McpServer {
                                 .put("id", new JSONObject().put("type", "string")
                                         .put("description", "运动 ID：开始时间:结束时间:运动类型；exercise_detail 必填")))
                         .put("required", new JSONArray().put("action"))
-                        .put("additionalProperties", false)));
+                        .put("additionalProperties", false)))
+                .put(new JSONObject()
+                        .put("name", "weather")
+                        .put("description", "查询天气模块最近推送到本机的天气；返回今天当前天气和逐小时预报，不自动打开天气应用")
+                        .put("inputSchema", new JSONObject()
+                                .put("type", "object")
+                                .put("properties", new JSONObject())
+                                .put("additionalProperties", false)));
     }
 
     private static JSONArray actionNames() {

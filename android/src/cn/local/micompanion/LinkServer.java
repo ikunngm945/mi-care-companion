@@ -254,7 +254,7 @@ public final class LinkServer {
             if (!LinkProtocol.tokenEquals(token, supplied)) {
                 if (status != null) {
                     status.authFailures++;
-                    status.lastError = "Token 不匹配";
+                    status.lastError = "token 已过期";
                 }
                 log("handshake rejected: token");
                 reject(socket, "401 Unauthorized"); return;
@@ -287,6 +287,7 @@ public final class LinkServer {
             fresh.status.lastPongAt = fresh.status.connectedAt;
             fresh.status.rttMs = -1;
             fresh.status.lastError = "";
+            fresh.status.authFailures = 0;
         }
         if (old != null) old.close(1000, "replaced");
     }

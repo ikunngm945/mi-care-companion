@@ -32,7 +32,7 @@ public final class McpServerTest {
         McpServer server = new McpServer(17992, "abcdefghijklmnop", request -> {
             String action = request.optString("action");
             return action.startsWith("exercise_") ? exercise : data;
-        });
+        }, request -> new JSONObject().put("status", "ok").put("text", "天气（今天 2026-11-07）：\n现在：气温 16℃"));
         if (!server.start()) throw new AssertionError("MCP server did not start");
         try {
             check(request("", "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}").startsWith("HTTP/1.1 401"), "auth required");
@@ -42,13 +42,22 @@ public final class McpServerTest {
             String list = request("abcdefghijklmnop", "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}");
             JSONObject listed = new JSONObject(list.substring(list.indexOf("\r\n\r\n") + 4));
             JSONArray tools = listed.getJSONObject("result").getJSONArray("tools");
-            check(tools.length() == 1 && "health".equals(tools.getJSONObject(0).getString("name")), "single health tool");
+            check(tools.length() == 2, "health and weather are separate tools");
+            check("health".equals(tools.getJSONObject(0).getString("name")), "first tool is health");
+            check("weather".equals(tools.getJSONObject(1).getString("name")), "second tool is weather");
+            check(tools.getJSONObject(1).getJSONObject("inputSchema").getJSONObject("properties").length() == 0,
+                    "weather takes no arguments");
             String call = request("abcdefghijklmnop", "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"health\",\"arguments\":{\"action\":\"heart_rate_detail\",\"date\":\"2026-10-31\"}}}");
             check(call.contains("08:00-08:15"), "detail text");
             check(call.contains("82-98"), "range text");
             String exerciseCall = request("abcdefghijklmnop", "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"health\",\"arguments\":{\"action\":\"exercise_records\",\"start_date\":\"2026-10-31\",\"end_date\":\"2026-10-31\"}}}");
             check(exerciseCall.contains("户外跑步") && exerciseCall.contains("ID 1:482:22"), "exercise text");
             check(exerciseCall.contains("8'21"), "exercise pace text");
+            String weatherCall = request("abcdefghijklmnop", "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"weather\",\"arguments\":{}}}");
+            check(weatherCall.contains("天气（今天 2026-11-07）"), "weather text");
+            check(weatherCall.contains("气温 16℃"), "weather facts");
+            String noArgs = request("abcdefghijklmnop", "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"tools/call\",\"params\":{\"name\":\"weather\"}}");
+            check(noArgs.contains("天气（今天 2026-11-07）"), "weather works without arguments");
             System.out.println("McpServerTest OK");
         } finally { server.stop(); }
     }

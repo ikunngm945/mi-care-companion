@@ -68,7 +68,7 @@ public final class SettingsForm {
         root.addView(status);
 
         root.addView(label(activity,
-                "说明：修改端口或 Token 后，主程序和另一个模块也要同步修改；Token 错误时这里会显示鉴权失败。",
+                "说明：修改端口或 Token 后，主程序和另一个模块也要同步修改；密钥鉴权失败时显示“token 已过期”；普通掉线只显示未连接。",
                 12, secondary));
 
         save.setOnClickListener(v -> {
@@ -165,7 +165,7 @@ public final class SettingsForm {
             long age = status.lastHeartbeatAt <= 0 ? -1 : Math.max(0, SystemClock.elapsedRealtime() - status.lastHeartbeatAt) / 1000;
             out.append(" · ").append(age < 0 ? "等待心跳" : "最近心跳 " + age + " 秒前");
         }
-        if (status.authFailures > 0) out.append("\n鉴权失败 ").append(status.authFailures).append(" 次：Token 与主程序不一致");
+        if (status.authFailures > 0) out.append("\ntoken 已过期；请检查 Token 是否与主程序一致");
         if (!status.error.isEmpty()) out.append('\n').append(status.error);
         out.append("\n已送达快照：").append(status.delivered);
         return out.toString();

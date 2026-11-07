@@ -6,7 +6,7 @@
 
 - 主程序 MCP 监听 `*:17891`，路径 `/mcp`；本机使用 `127.0.0.1`，局域网使用手机地址（本次为 `192.168.110.9`）。
 - 无 `Authorization: Bearer <Token>` 返回 `HTTP/1.1 401`；正确 Token 返回 JSON-RPC 结果。
-- `initialize` 返回 `protocolVersion=2024-11-05`，`tools/list` 返回一个 `health` 工具；`action` 选择查询类型。
+- `initialize` 返回 `protocolVersion=2024-11-05`，`tools/list` 返回 `health` 和 `weather` 两个独立工具；`health` 用 `action` 选择查询类型。
 
 ## 实测结果
 
@@ -73,7 +73,8 @@ t,心率,步频,步幅,配速,距离,卡路里,步数
 
 ## 边界
 
-- MCP 只读主程序保存的健康数据库副本，不提供写入工具；首次连接或手动点“同步数据库与请求”时由健康模块复制。
+- MCP 只读主程序保存的健康数据库副本，不提供写入工具；健康模块每次连接成功或手动点“同步数据库与请求”时复制。不再依赖主程序的 30 分钟/10 分钟定时同步。
+- 普通掉线仅显示“未连接”，不弹消息；模块密钥鉴权失败时显示并提示“token 已过期”，不自动拉起目标应用。正确 Token 重连后清除失效状态并自动同步。
 - 睡眠按醒来日归档；`sleep_detail` 包含当天结束的所有睡眠段，跨午夜段保留前一晚的起止时间。
 - 三项指标的 detail 固定 15 分钟聚合，不返回原始逐点序列；summary 的范围和平均值来自同一批日记录。运动 `exercise_detail` 是唯一返回逐秒序列的工具，数据来自健康应用私有记录文件。
 - MCP 查询不自动拉起健康应用；本地副本已存在时，健康应用未运行也能查询。副本不存在时明确返回“健康数据库尚未同步”，不伪造健康数据。
@@ -92,7 +93,7 @@ t,心率,步频,步幅,配速,距离,卡路里,步数
 
 AstrBot 的 `_quick_test_mcp_connection` 会先发 `initialize` 并检查 HTTP 200；实测本服务返回 200 和 `protocolVersion=2024-11-05`。随后标准 Streamable HTTP 客户端发 `tools/list`/`tools/call`，不需要额外 SSE 通道。
 
-2026-10-31 在 AstrBot 4.27.4 的「扩展 → MCP」中以名称 `mi_companion`、上述 URL/transport/Header 保存成功，接口返回 `connected=true`，工具列表为一个 `health` 工具（`action` 覆盖睡眠、心率、压力、血氧、运动摘要和运动详情），`errlogs` 为空。
+2026-10-31 在 AstrBot 4.27.4 的「扩展 → MCP」中以名称 `mi_companion`、上述 URL/transport/Header 保存成功，接口返回 `connected=true`，当时工具列表为一个 `health` 工具；当前版本已拆为 `health` 和 `weather` 两个独立工具（`health` 的 `action` 覆盖睡眠、心率、压力、血氧、运动摘要和运动详情；`weather` 无参数返回今天天气），`errlogs` 为空。
 
 ### AstrBot 兼容补丁
 
@@ -108,4 +109,4 @@ AstrBot 的 `_quick_test_mcp_connection` 会先发 `initialize` 并检查 HTTP 2
 
 - 健康模块首次连接后，主程序 `files/health/fitness_data.db` 为 118 MiB，`files/health/fitness` 下 306 个运动详情文件。
 - 点“同步数据库与请求”后副本重新生成；MCP `health` 的 `sleep_summary`、`exercise_records`、`exercise_detail` 均从副本返回，逐秒明细 418 条。
-- `tools/list` 只返回一个 `health` 工具；`health` 的 `action` 覆盖原有 10 类查询。
+- `tools/list` 返回 `health` 和 `weather` 两个独立工具；`health` 的 `action` 覆盖原有 10 类查询，`weather` 读取本机天气快照。

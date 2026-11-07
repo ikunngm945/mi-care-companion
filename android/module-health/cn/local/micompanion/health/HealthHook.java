@@ -61,6 +61,10 @@ public final class HealthHook implements IXposedHookLoadPackage {
                     }
                     return HealthQueryService.query(app, query);
                 });
+                client.setConnectedHandler(() -> {
+                    requestDatabase();
+                    worker.execute(HealthHook::publish);
+                });
                 client.start();
                 if (!started) {
                     started = true;
