@@ -8,14 +8,14 @@ import java.util.concurrent.atomic.*;
 public final class RouteApiTest {
  static void eq(Object a,Object b){if(!a.equals(b))throw new AssertionError("expected "+a+", got "+b);}
  public static void main(String[] args)throws Exception{
-  AtomicReference<String> route=new AtomicReference<>("{\"status\":\"ok\",\"data\":{\"routing\":{\"default_1905318781:*:*\":\"target-profile\"}}}");
+  AtomicReference<String> route=new AtomicReference<>("{\"status\":\"ok\",\"data\":{\"routing\":{\"default_1234567890:*:*\":\"target-profile\"}}}");
   AtomicReference<String> profiles=new AtomicReference<>("{\"status\":\"ok\",\"data\":{\"info_list\":[{\"id\":\"target-profile\",\"name\":\"my profile\",\"path\":\"unused.json\"},{\"id\":\"default\",\"name\":\"default\",\"path\":\"unused.json\"}]}}");
   AtomicReference<String> generated=new AtomicReference<>("适当休息。");
   AtomicInteger routeCode=new AtomicInteger(200),posts=new AtomicInteger();AtomicReference<JSONObject> body=new AtomicReference<>();
   HttpServer s=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
   s.createContext("/api/v1",x->{try{
    String path=x.getRequestURI().getPath();String answer;int status=200;
-   if(path.equals("/api/v1/im/bots"))answer="{\"status\":\"ok\",\"data\":{\"bot_ids\":[\"default_1905318781\"]}}";
+   if(path.equals("/api/v1/im/bots"))answer="{\"status\":\"ok\",\"data\":{\"bot_ids\":[\"default_1234567890\"]}}";
    else if(path.equals("/api/v1/chat/sessions"))answer="{\"status\":\"ok\",\"data\":{\"sessions\":[],\"page\":1,\"page_size\":1,\"total\":0}}";
    else if(path.equals("/api/v1/config-routes")){answer=route.get();status=routeCode.get();}
    else if(path.equals("/api/v1/config-profiles"))answer=profiles.get();
@@ -27,7 +27,7 @@ public final class RouteApiTest {
    }else {answer="{}";status=404;}
    byte[] bytes=answer.getBytes(StandardCharsets.UTF_8);x.sendResponseHeaders(status,bytes.length);x.getResponseBody().write(bytes);
   }finally{x.close();}});s.start();
-  SettingsStore.Config c=new SettingsStore.Config("http://127.0.0.1:"+s.getAddress().getPort()+"/api/v1","test-key","default_1905318781:FriendMessage:123",true);
+  SettingsStore.Config c=new SettingsStore.Config("http://127.0.0.1:"+s.getAddress().getPort()+"/api/v1","test-key","default_1234567890:FriendMessage:123",true);
   try{
    eq("适当休息。",OfficialApi.generate(c,"test-event","{}"));
    eq("target-profile",body.get().optString("config_id"));
@@ -56,10 +56,10 @@ public final class RouteApiTest {
     eq(true,invalid);eq(beforeInvalid,posts.get());
    if(limited.codePointCount(0,limited.length())!=600)throw new AssertionError("generated body was truncated at the old 500-character cap");
    if(!message.contains("使用自定义称呼"))throw new AssertionError("custom prompt lost");
-   for(String bad:new String[]{"{\"status\":\"ok\",\"data\":{}}","{\"status\":\"ok\",\"data\":{\"routing\":{\"default_1905318781:*:*\":\"deleted\"}}}","{\"status\":\"ok\",\"data\":{\"routing\":{\"*:*:*\":\"target-profile\",\"default_1905318781:*:*\":\"default\"}}}"}){
+   for(String bad:new String[]{"{\"status\":\"ok\",\"data\":{}}","{\"status\":\"ok\",\"data\":{\"routing\":{\"default_1234567890:*:*\":\"deleted\"}}}","{\"status\":\"ok\",\"data\":{\"routing\":{\"*:*:*\":\"target-profile\",\"default_1234567890:*:*\":\"default\"}}}"}){
     route.set(bad);int before=posts.get();boolean rejected=false;
     // The all-wildcard case above matches target-profile for both target/chat and is valid: test a conflicting WebChat wildcard instead.
-    if(bad.contains("*:*:*"))route.set("{\"status\":\"ok\",\"data\":{\"routing\":{\"webchat:*:*\":\"default\",\"default_1905318781:*:*\":\"target-profile\"}}}");
+    if(bad.contains("*:*:*"))route.set("{\"status\":\"ok\",\"data\":{\"routing\":{\"webchat:*:*\":\"default\",\"default_1234567890:*:*\":\"target-profile\"}}}");
     try{OfficialApi.generate(c,"test-event","{}");}catch(Exception expected){rejected=true;}
     eq(true,rejected);eq(before,posts.get());
    }

@@ -40,9 +40,9 @@ public final class RouteResolverTest {
     }
     public static void main(String[] args) throws Exception {
         // Catches absent routing and the tempting unconditional default fallback.
-        test("target bot profile", () -> equal("fdcc7c02-0fbb-42d3-8585-0feb75c0fa48", RouteResolver.resolve(
-                envelope("\"default_1905318781:*:*\":\"fdcc7c02-0fbb-42d3-8585-0feb75c0fa48\""),
-                "default_1905318781:FriendMessage:123456")));
+        test("target bot profile", () -> equal("00000000-0000-4000-8000-000000000000", RouteResolver.resolve(
+                envelope("\"default_1234567890:*:*\":\"00000000-0000-4000-8000-000000000000\""),
+                "default_1234567890:FriendMessage:123456")));
         // Java HashMap buckets: bot:*:* = 13, *:*:* = 0, bot:FriendMessage:123456 = 12.
         // Lexical sorting or HashMap iteration puts a different matching route first.
         test("wire order is neither lexical order nor HashMap bucket order", () -> {

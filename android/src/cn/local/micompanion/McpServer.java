@@ -230,6 +230,7 @@ public final class McpServer {
                                 .put("type", "object")
                                 .put("properties", new JSONObject())
                                 .put("additionalProperties", false)));
+
     }
 
     private static JSONArray actionNames() {

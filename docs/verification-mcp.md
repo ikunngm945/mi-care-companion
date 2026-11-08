@@ -1,10 +1,10 @@
 # 0.8.0 MCP 真机验收
 
-验收设备：Xiaomi 22127RK46C（Android 16，LSPosed/Shizuku 环境），日期 2026-10-31，时区 `Asia/Shanghai`。Token 已从记录中隐去。
+验收设备：Xiaomi 手机（型号已隐去）（Android 16，LSPosed/Shizuku 环境），日期 2026-10-31，时区 `Asia/Shanghai`。Token 已从记录中隐去。
 
 ## 端点与鉴权
 
-- 主程序 MCP 监听 `*:17891`，路径 `/mcp`；本机使用 `127.0.0.1`，局域网使用手机地址（本次为 `192.168.110.9`）。
+- 主程序 MCP 监听 `*:17891`，路径 `/mcp`；本机使用 `127.0.0.1`，局域网使用手机地址（本次为 `192.0.2.10`）。
 - 无 `Authorization: Bearer <Token>` 返回 `HTTP/1.1 401`；正确 Token 返回 JSON-RPC 结果。
 - `initialize` 返回 `protocolVersion=2024-11-05`，`tools/list` 返回 `health` 和 `weather` 两个独立工具；`health` 用 `action` 选择查询类型。
 
@@ -69,7 +69,7 @@ t,心率,步频,步幅,配速,距离,卡路里,步数
 
 ### 局域网
 
-从另一台同网设备直接请求 `http://192.168.110.9:17891/mcp`，正确 Token 下 `ping` 返回 `{"result":{}}`；无需经过手机本机端口转发。
+从另一台同网设备直接请求 `http://192.0.2.10:17891/mcp`，正确 Token 下 `ping` 返回 `{"result":{}}`；无需经过手机本机端口转发。
 
 ## 边界
 
@@ -107,6 +107,6 @@ AstrBot 的 `_quick_test_mcp_connection` 会先发 `initialize` 并检查 HTTP 2
 
 ## 2026-11-07 数据库副本验收
 
-- 健康模块首次连接后，主程序 `files/health/fitness_data.db` 为 118 MiB，`files/health/fitness` 下 306 个运动详情文件。
+- 手动点“同步数据库与请求”后，主程序 `files/health/fitness_data.db` 为约 118 MiB，`files/health/fitness` 下 306 个运动详情文件；打开运动健康本身不再自动复制。
 - 点“同步数据库与请求”后副本重新生成；MCP `health` 的 `sleep_summary`、`exercise_records`、`exercise_detail` 均从副本返回，逐秒明细 418 条。
 - `tools/list` 返回 `health` 和 `weather` 两个独立工具；`health` 的 `action` 覆盖原有 10 类查询，`weather` 读取本机天气快照。

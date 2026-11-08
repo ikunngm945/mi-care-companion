@@ -1,7 +1,27 @@
+# build outputs and local dependencies
 build/
+dist/
 tools/deps/
 signing/
+*.apk
+*.idsig
+*.zip
+
+# local caches / generated files
 __pycache__/
 *.pyc
 *.sqlite3
 *.sqlite3-*
+*.log
+*.bak
+window.xml
+
+# local probes and private data
+提示词.txt
+kg/
+kugou-mcp/
+kugou-mcp-ref/
+image-*.png
+jadx4.log
+mi-companion-*.txt
+mi-companion-*.json

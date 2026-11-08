@@ -20,9 +20,8 @@ import java.security.MessageDigest;
 import java.util.Base64;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 
-/** Reads the health app only, then pushes the snapshot to the main app over loopback WebSocket. */
+/** Reads the health app only; manual sync_database requests copy data to the main app. */
 public final class HealthHook implements IXposedHookLoadPackage {
     private static final ScheduledExecutorService worker = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread thread = new Thread(r, "mi-companion-health");
@@ -31,7 +30,6 @@ public final class HealthHook implements IXposedHookLoadPackage {
     });
     private static volatile Context target;
     private static volatile LinkClient client;
-    private static volatile boolean started;
     private static volatile boolean databaseSent;
     private static volatile boolean fitnessSent;
     private static volatile boolean databaseBusy;
@@ -59,26 +57,62 @@ public final class HealthHook implements IXposedHookLoadPackage {
                         requestDatabase();
                         return new JSONObject().put("status", "ok").put("action", "sync_database");
                     }
+                    if ("band_key".equals(query.optString("action"))) return readBandKey(app);
                     return HealthQueryService.query(app, query);
                 });
-                client.setConnectedHandler(() -> {
-                    requestDatabase();
-                    worker.execute(HealthHook::publish);
-                });
+                // Manual-only: opening Mi Fitness must not copy the database or push a snapshot.
+                // The user explicitly triggers a transfer with the main app's sync button (or
+                // a sync_database query from the main app, including the band-channel fallback).
+                // Keep the link alive for the band_key query.
                 client.start();
-                if (!started) {
-                    started = true;
-                    worker.scheduleWithFixedDelay(HealthHook::publish, 60, 60, TimeUnit.SECONDS);
-                    worker.scheduleWithFixedDelay(HealthHook::publishDatabase, 10, 60, TimeUnit.SECONDS);
-                }
             }
         });
+    }
+
+    /** Read the already-paired band identity from Mi Fitness' private device database. */
+    private static JSONObject readBandKey(Context context) throws Exception {
+        SQLiteDatabase database = null;
+        try {
+            File databases = context.getDatabasePath("device_db").getParentFile();
+            File file = new File(databases, "device_db");
+            if (!file.isFile()) return new JSONObject().put("status", "missing").put("reason", "设备数据库未找到");
+            database = SQLiteDatabase.openDatabase(file.getAbsolutePath(), null,
+                    SQLiteDatabase.OPEN_READONLY | SQLiteDatabase.NO_LOCALIZED_COLLATORS);
+            android.database.Cursor cursor = database.rawQuery("SELECT detail, extraValues FROM device", null);
+            try {
+                while (cursor.moveToNext()) {
+                    for (int column = 0; column < 2; column++) {
+                        String raw = cursor.getString(column);
+                        if (raw == null || raw.isEmpty()) continue;
+                        try {
+                            JSONObject object = new JSONObject(raw);
+                            String mac = object.optString("mac", "").trim().toUpperCase(java.util.Locale.US);
+                            String key = object.optString("encrypt_key", "").trim().toLowerCase(java.util.Locale.US);
+                            if (mac.matches("[0-9A-F]{2}(:[0-9A-F]{2}){5}") && key.matches("[0-9a-f]{32}")) {
+                                return new JSONObject().put("status", "ok").put("mac", mac)
+                                        .put("key", key).put("model", object.optString("model", ""));
+                            }
+                        } catch (Exception ignored) { }
+                    }
+                }
+            } finally {
+                cursor.close();
+            }
+            return new JSONObject().put("status", "missing").put("reason", "未找到已配对手环密钥");
+        } catch (Throwable error) {
+            return new JSONObject().put("status", "error").put("reason", "读取设备数据库失败");
+        } finally {
+            if (database != null) try { database.close(); } catch (Exception ignored) { }
+        }
     }
 
     private static void requestDatabase() {
         databaseSent = false;
         fitnessSent = false;
-        worker.execute(HealthHook::publishDatabase);
+        worker.execute(() -> {
+            publishDatabase();
+            publish();
+        });
     }
 
     private static void publishDatabase() {

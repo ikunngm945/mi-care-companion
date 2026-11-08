@@ -5,6 +5,7 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.NotificationManager;
 import android.app.usage.UsageStatsManager;
+import android.content.SharedPreferences;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Intent;
@@ -100,7 +101,7 @@ public final class MainActivity extends Activity {
                     stopService(new Intent(this, MonitorService.class));
                     refresh();
                 }).show());
-        text("不再定时同步或定时拉起应用。手动打开天气或运动健康后，模块连接成功会自动推送数据；普通掉线仅显示未连接，密钥鉴权失败显示“token 已过期”，不会因此自动拉起应用。", 14);
+        text("不再定时同步天气/健康数据或定时拉起应用。健康模块只在点“同步数据库与请求”时传输数据库；打开/拉起运动健康不会自动复制数据库。天气模块仍按原方式在天气应用运行时推送快照。普通掉线只显示未连接；手环请求失败且蓝牙已开启时提示“token 已过期”，模块 WebSocket 鉴权失败显示“模块鉴权失败”。", 14);
         preferShizuku = new CheckBox(this);
         preferShizuku.setText("优先使用 Shizuku 拉起（备用通道）");
         preferShizuku.setChecked(getSharedPreferences("monitor", 0).getBoolean("prefer_shizuku", false));
@@ -127,6 +128,16 @@ public final class MainActivity extends Activity {
             MonitorService.requestDatabaseSync(this);
             return "已请求健康模块同步数据库；传输完成后 MCP 直接读取本机副本";
         }));
+        button("手动同步手环（不打开运动健康）", v -> {
+            if (!ensureBluetoothPermission()) return;
+            background((Button)v, "正在直连手环…", () -> {
+                org.json.JSONObject sync = MonitorService.syncBand(this);
+                return sync.optBoolean("fallback", false) ? sync.optString("text", "已切换运动健康同步")
+                        : "手环直连完成\n" + BandData.describe(sync);
+            });
+        });
+        text("手环每 10 分钟自动直连同步一次，不打开/不拉起运动健康；也可以点上面的按钮手动同步。若运动健康已占用蓝牙通道，自动同步会切换为运动健康同步。", 14);
+        text("手环请求失败且蓝牙已开启时提示“token 已过期”（不是运动健康模块的问题）；下一次自动同步会重新读取手环密钥并重试。", 14);
         privilege = text("", 14);
         linkStatus = text("", 15); linkStatus.setTextIsSelectable(true);
 
@@ -194,6 +205,13 @@ public final class MainActivity extends Activity {
         ShizukuShell.listen(() -> runOnUiThread(this::refresh));
         refresh();
         linkHandler.postDelayed(this::refresh, 1500);
+    }
+    private boolean ensureBluetoothPermission() {
+        if (Build.VERSION.SDK_INT < 31) return true;
+        if (checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) return true;
+        requestPermissions(new String[]{Manifest.permission.BLUETOOTH_CONNECT}, 2);
+        showReport("请允许“附近的设备”权限后，再点一次“直接从手环同步”。");
+        return false;
     }
     private void ensureServiceOnLaunch() {
         android.content.SharedPreferences prefs = getSharedPreferences("monitor", 0);
@@ -307,8 +325,7 @@ public final class MainActivity extends Activity {
             String name = "weather".equals(kind) ? "天气模块" : "健康模块";
             LinkServer.Status status = server == null ? null : server.status(kind);
             if (status != null && status.authFailures > 0) {
-                tokenExpired = true;
-                out.append(name).append("：token 已过期\n");
+                out.append(name).append("：模块鉴权失败，请重新填写 Token\n");
             } else if (status == null || !status.connected) {
                 out.append(name).append("：未连接");
                 if (status != null && !status.lastError.isEmpty()) out.append("（").append(status.lastError).append("）");
@@ -320,6 +337,25 @@ public final class MainActivity extends Activity {
                 if (status.rttMs >= 0) out.append(" · RTT ").append(status.rttMs).append(" ms");
                 out.append('\n');
             }
+        }
+        SharedPreferences bandPrefs = getSharedPreferences("monitor", 0);
+        String bandError = bandPrefs.getString("band_auto_error", "");
+        boolean bandExpired = bandPrefs.getBoolean("band_token_expired", false);
+        long bandAt = bandPrefs.getLong("band_auto_at", 0);
+        out.append("手环自动同步：");
+        if (bandExpired) {
+            tokenExpired = true;
+            out.append("token 已过期（蓝牙已开启，但请求手环失败）\n");
+        } else if (!bandError.isEmpty()) {
+            out.append("失败（").append(bandError).append("）\n");
+        } else if (bandAt > 0) {
+            long age = Math.max(0, System.currentTimeMillis() - bandAt) / 1000;
+            out.append("上次成功 ").append(age / 60).append(" 分钟前");
+            String source = bandPrefs.getString("band_auto_source", "");
+            if ("health".equals(source)) out.append(" · 运动健康回退");
+            out.append('\n');
+        } else {
+            out.append("等待首次 10 分钟同步\n");
         }
         linkStatus.setText(out.toString());
         if (tokenExpired && !tokenExpiryShown)

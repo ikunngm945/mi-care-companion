@@ -85,10 +85,7 @@ public final class EventClient {
             JSONObject weather = null, health = null, screen = null;
             JSONObject previous = null;
             boolean ready = true;
-            if (!manual) {
-                ready = TargetRecovery.ensureForSend(c, MonitorService.current(), 60_000);
-                if (!ready) previous = previousEvent(db, now);
-            }
+            if (!manual) previous = previousEvent(db, now);
             if (previous != null) {
                 weather = previous.optJSONObject("weather");
                 health = previous.optJSONObject("health");

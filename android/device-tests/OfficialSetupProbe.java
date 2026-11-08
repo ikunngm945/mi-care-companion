@@ -32,12 +32,12 @@ public final class OfficialSetupProbe extends Instrumentation {
             long end=SystemClock.uptimeMillis()+80000;boolean[] done={false};
             while(!done[0]&&SystemClock.uptimeMillis()<end){ui(()->done[0]=field("check",Button.class).isEnabled());if(!done[0])SystemClock.sleep(50);}
             if(!done[0])throw new AssertionError("check timeout");
-            ui(()->{TextView r=field("report",TextView.class);if(!r.getText().toString().startsWith("官方接口检查通过")||!r.getText().toString().contains(cfg.optString("expected_config","fdcc7c02-0fbb-42d3-8585-0feb75c0fa48")))throw new AssertionError("official check did not succeed");});
+            ui(()->{TextView r=field("report",TextView.class);if(!r.getText().toString().startsWith("官方接口检查通过")||!r.getText().toString().contains(cfg.optString("expected_config","00000000-0000-4000-8000-000000000000")))throw new AssertionError("official check did not succeed");});
             SystemClock.sleep(200);
             ui(()->{TextView r=field("report",TextView.class);Rect rect=new Rect();if(!r.getGlobalVisibleRect(rect)||rect.height()<r.getHeight())throw new AssertionError("check result not fully visible");});
             b.putString("setup","PASS: encrypted official config saved; real UI check passed and fully visible");
             b.putString("requests","GET bots + chat sessions + config routes + profiles only; no model call / no IM send");
-            b.putString("matched_config","fdcc7c02-0fbb-42d3-8585-0feb75c0fa48");
+            b.putString("matched_config","00000000-0000-4000-8000-000000000000");
         }catch(Throwable e){code=1;b.putString("failure",e instanceof AssertionError?e.getMessage():e.getClass().getSimpleName());}
         finish(code,b);
     }

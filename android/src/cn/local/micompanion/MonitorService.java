@@ -11,6 +11,7 @@ import java.util.UUID;
 import java.util.concurrent.*;
 
 public final class MonitorService extends Service {
+ private static volatile MonitorService instance;
  public static final String ACTION_RELOAD_LINK="cn.local.micompanion.action.RELOAD_LINK";
  public static final String ACTION_REFRESH="cn.local.micompanion.action.REFRESH";
  private static volatile LinkServer link;
@@ -18,6 +19,9 @@ public final class MonitorService extends Service {
  private static volatile boolean serviceRunning;
  private final Handler h=new Handler(Looper.getMainLooper());
  private final ExecutorService net=Executors.newSingleThreadExecutor();
+ private static final long BAND_INTERVAL_MS=10*60*1000L;
+ private final java.util.concurrent.atomic.AtomicBoolean bandBusy=new java.util.concurrent.atomic.AtomicBoolean();
+ private ScheduledExecutorService bandSchedule;
  private TriggerState state;
  private SharedPreferences p;
  private boolean wasOn;
@@ -32,7 +36,8 @@ public final class MonitorService extends Service {
   String pullError=settings.getString("pull_error","");
   return settings.getString("status","监控未启动")+(error.isEmpty()?"":"\n最近自动事件提示："+error)
    +(linkError.isEmpty()?"":"\n数据连接："+linkError)
-   +(pullError.isEmpty()?"":"\n自动拉起："+pullError);
+   +(pullError.isEmpty()?"":"\n自动拉起："+pullError)
+   +(settings.getString("band_auto_error","").isEmpty()?"":"\n手环："+settings.getString("band_auto_error",""));
  }
  public static void refresh(Context c){
   if(current()==null)return;
@@ -161,6 +166,101 @@ public final class MonitorService extends Service {
   String text=WeatherText.compact(snapshot.optJSONObject("fields"),snapshot.optString("collected_at",""));
   return new org.json.JSONObject().put("status","ok").put("text",text);
  }
+ private void startBandSchedule(){
+  if(bandSchedule!=null)return;
+  bandSchedule=Executors.newSingleThreadScheduledExecutor(r->{Thread t=new Thread(r,"band-auto");t.setDaemon(true);return t;});
+  bandSchedule.scheduleWithFixedDelay(this::bandAuto,BAND_INTERVAL_MS,BAND_INTERVAL_MS,TimeUnit.MILLISECONDS);
+ }
+
+ static void runBandAutoNow(Context context){
+  MonitorService service=instance;
+  if(service!=null)service.bandAuto();
+ }
+
+ private void bandAuto(){
+  if(!bandBusy.compareAndSet(false,true))return;
+  try{
+   BandConfig config=null;
+   boolean refresh=p.getBoolean("band_retry_key",false);
+   if(refresh){try{config=BandConfig.provision(this);}catch(Exception ignored){ }}
+   if(config==null)config=BandConfig.load(this);
+   if(config==null){try{config=BandConfig.provision(this);}catch(Exception ignored){ }}
+   if(config==null)config=provisionBandKey();
+   if(refresh&&config!=null){BandConfig fresh=provisionBandKey();if(fresh!=null)config=fresh;}
+   if(config==null)throw new IllegalStateException("缺少手环密钥");
+   org.json.JSONObject sync=BandSync.sync(this,config);
+   BandStore.put(this,sync);
+   p.edit().remove("band_auto_error").putBoolean("band_token_expired",false).putBoolean("band_retry_key",false)
+     .putBoolean("band_health_fallback",false).putLong("band_auto_at",System.currentTimeMillis()).putString("band_auto_source","band").apply();
+  }catch(Exception error){
+   String message=error.getMessage()==null?"手环请求失败":error.getMessage();
+   boolean token=bluetoothOn(this)&&BandConfig.load(this)!=null;
+   p.edit().putString("band_auto_error",message).putBoolean("band_token_expired",token)
+     .putBoolean("band_retry_key",true).putLong("band_auto_at",System.currentTimeMillis()).apply();
+   // Direct SPP failed (often because Mi Fitness owns the channel). Do not force-stop or open
+   // Mi Fitness; if its module is already connected, ask it to perform its own sync instead.
+   healthFallback(this);
+  }finally{
+   bandBusy.set(false);
+  }
+ }
+
+ private static boolean bluetoothOn(Context context){
+  try{
+   android.bluetooth.BluetoothAdapter adapter=android.bluetooth.BluetoothAdapter.getDefaultAdapter();
+   return adapter!=null&&adapter.isEnabled();
+  }catch(Throwable ignored){return false;}
+ }
+ private static boolean healthFallback(Context context){
+  LinkServer server=link;
+  if(server==null)return false;
+  long deadline=System.currentTimeMillis()+5000;
+  while(!server.status("health").connected&&System.currentTimeMillis()<deadline){
+   try{Thread.sleep(200);}catch(InterruptedException ignored){Thread.currentThread().interrupt();break;}
+  }
+  if(!server.status("health").connected)return false;
+  try{
+   server.query("health",new org.json.JSONObject().put("action","sync_database"),10_000);
+   context.getSharedPreferences("monitor",0).edit().putString("band_auto_source","health")
+     .putBoolean("band_health_fallback",true).apply();
+   return true;
+  }catch(Exception ignored){return false;}
+ }
+
+ /** UI manual entry point: try direct SPP first, fall back to the health module when its channel is busy. */
+ static org.json.JSONObject syncBand(Context context)throws Exception{
+  try{
+   BandConfig config=BandConfig.load(context);
+   if(config==null){try{config=BandConfig.provision(context);}catch(Exception ignored){ }}
+   MonitorService current=instance;
+   if(config==null&&current!=null)config=current.provisionBandKey();
+   if(config==null)throw new IllegalStateException("缺少手环密钥；请先连接一次健康模块，或打开运动健康后重试");
+   org.json.JSONObject sync=BandSync.sync(context,config);
+   BandStore.put(context,sync);
+   context.getSharedPreferences("monitor",0).edit().remove("band_auto_error")
+     .putBoolean("band_token_expired",false).putBoolean("band_retry_key",false)
+     .putString("band_auto_source","band").putBoolean("band_health_fallback",false).apply();
+   return sync;
+  }catch(Exception error){
+   boolean token=bluetoothOn(context)&&BandConfig.load(context)!=null;
+   context.getSharedPreferences("monitor",0).edit().putString("band_auto_error",error.getMessage()==null?"手环请求失败":error.getMessage())
+     .putBoolean("band_token_expired",token).putBoolean("band_retry_key",true)
+     .putLong("band_auto_at",System.currentTimeMillis()).apply();
+   if(healthFallback(context))return new org.json.JSONObject().put("status","ok").put("fallback",true).put("text","手环通道被占用，已切换运动健康同步");
+   throw error;
+  }
+ }
+ private BandConfig provisionBandKey(){
+  try{
+   if(link==null||!link.status("health").connected)return null;
+   org.json.JSONObject answer=link.query("health",new org.json.JSONObject().put("action","band_key"),8_000);
+   BandConfig config=BandConfig.fromJson(answer);
+   return BandConfig.save(this,config);
+  }catch(Exception error){
+   android.util.Log.w("BandConfig","band key query failed: "+error.getClass().getSimpleName()+" "+error.getMessage());
+   return null;
+  }
+ }
  private org.json.JSONObject queryHealth(org.json.JSONObject request)throws Exception{
   if("sync_database".equals(request.optString("action")))return requestDatabaseSync(this);
   if(HealthDatabaseStore.available(this))return HealthDatabaseStore.query(this,request);
@@ -179,10 +279,11 @@ public final class MonitorService extends Service {
   startLink();
  }
  @Override public void onCreate(){
-  super.onCreate();serviceRunning=true;p=getSharedPreferences("monitor",0);
+  super.onCreate();serviceRunning=true;instance=this;p=getSharedPreferences("monitor",0);
   NotificationManager nm=getSystemService(NotificationManager.class);nm.createNotificationChannel(new NotificationChannel("monitor","屏幕监控",NotificationManager.IMPORTANCE_LOW));
   updateNotification();
   startLink();
+  startBandSchedule();
   state=TriggerState.decode(p.getString("state",""));
   boot=bootCount();restore(SystemClock.elapsedRealtime(),System.currentTimeMillis(),on(),unlocked());
   IntentFilter f=new IntentFilter();f.addAction(Intent.ACTION_SCREEN_OFF);f.addAction(Intent.ACTION_SCREEN_ON);f.addAction(Intent.ACTION_USER_PRESENT);
@@ -196,10 +297,11 @@ public final class MonitorService extends Service {
   return START_STICKY;
  }
  @Override public void onDestroy(){
-  h.removeCallbacksAndMessages(null);unregisterReceiver(screen);serviceRunning=false;
+  h.removeCallbacksAndMessages(null);unregisterReceiver(screen);serviceRunning=false;if(instance==this)instance=null;
   if(mcp!=null){mcp.stop();mcp=null;}
   if(link!=null){link.stop();link=null;}
   if(!p.getBoolean("enabled",false)){state.restart();p.edit().putString("state",state.encode()).remove("boot").remove("last_elapsed").remove("last_wall").commit();}
+  ScheduledExecutorService schedule=bandSchedule;bandSchedule=null;if(schedule!=null)schedule.shutdownNow();
   // A system stop keeps the last observed checkpoint for evidence-based same-boot recovery.
   net.shutdown();super.onDestroy();
  }
