@@ -101,7 +101,7 @@ public final class MainActivity extends Activity {
                     stopService(new Intent(this, MonitorService.class));
                     refresh();
                 }).show());
-        text("不再定时同步天气/健康数据或定时拉起应用。健康模块只在点“同步数据库与请求”时传输数据库；打开/拉起运动健康不会自动复制数据库。天气模块仍按原方式在天气应用运行时推送快照。普通掉线只显示未连接；手环请求失败且蓝牙已开启时提示“token 已过期”，模块 WebSocket 鉴权失败显示“模块鉴权失败”。", 14);
+        text("健康数据双向补同步：手环直连取得的日常原始文件会在健康模块连接后自动补入运动健康；运动健康同步完成或重新连接后，会自动刷新本程序的查询副本。缺失记录会重试，来源账号或设备不匹配时不会回写。也可点“同步数据库与请求”立即请求刷新。天气模块仍按原方式推送快照。普通掉线显示未连接；模块鉴权失败会单独提示。", 14);
         preferShizuku = new CheckBox(this);
         preferShizuku.setText("优先使用 Shizuku 拉起（备用通道）");
         preferShizuku.setChecked(getSharedPreferences("monitor", 0).getBoolean("prefer_shizuku", false));

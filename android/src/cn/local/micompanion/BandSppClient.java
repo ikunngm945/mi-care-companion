@@ -359,9 +359,8 @@ final class BandSppClient {
         requestedFiles.remove(hex(fileId));
         fetchingFile = false;
         listener.onFile(file);
-        // The official app acknowledges a file before parsing it. Acknowledge only after the
-        // bytes are safely handed to the caller; the caller persists them synchronously.
-        sendCommand(BandProto.ackFileCommand(fileId));
+        // Keep activity files available for Mi Fitness as well. A fetch ACK consumes the
+        // device's pending-sync queue; durable local files are reconciled separately.
         requestNextFile();
     }
 

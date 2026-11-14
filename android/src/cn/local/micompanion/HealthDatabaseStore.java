@@ -67,6 +67,7 @@ final class HealthDatabaseStore {
             written += bytes.length;
         } else if ("database_end".equals(type)) {
             if (stream == null) throw new IllegalStateException("数据库传输尚未开始");
+            stream.getFD().sync();
             stream.close();
             stream = null;
             if (written != expected) {
@@ -80,14 +81,13 @@ final class HealthDatabaseStore {
                     throw new IllegalArgumentException("数据库校验失败");
                 }
             }
-            if (target.exists() && !target.delete()) {
-                abort();
-                throw new IllegalStateException("无法替换旧数据库");
-            }
             File saved = target;
-            if (!temp.renameTo(saved)) {
+            try {
+                java.nio.file.Files.move(temp.toPath(), saved.toPath(), java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            } catch (Exception failure) {
                 abort();
-                throw new IllegalStateException("无法保存数据库");
+                throw new IllegalStateException("无法保存数据库", failure);
             }
             boolean packed = "fitness".equals(name);
             temp = null;

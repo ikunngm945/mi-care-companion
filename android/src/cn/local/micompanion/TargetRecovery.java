@@ -62,6 +62,17 @@ final class TargetRecovery {
         }
     }
 
+    /** Starts the weather provider in background; does not open or navigate an activity. */
+    static boolean wakeWeatherSync(Context context) {
+        try {
+            String command="/system/bin/content query --uri content://weather/actualWeatherData/2 --projection publish_time >/dev/null 2>&1";
+            if (root(context)) run("su","-c",command);
+            else if (ShizukuShell.granted()) ShizukuShell.run(command);
+            else return false;
+            return true;
+        } catch(Exception error) { return false; }
+    }
+
     static String rootState(Context context) {
         return prefs(context).getString("root_state", "未检测");
     }

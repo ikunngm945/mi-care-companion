@@ -36,6 +36,8 @@ public final class WeatherHook implements IXposedHookLoadPackage {
             @Override protected void afterHookedMethod(MethodHookParam param) {
                 target = (Context)param.thisObject;
                 client = LinkClient.shared(target, "weather");
+                WeatherCloudClient cloud = new WeatherCloudClient(target, lp.classLoader, WeatherHook::publishCloud);
+                client.setQueryHandler(cloud::handle);
                 client.setConnectedHandler(() -> worker.execute(WeatherHook::publish));
                 client.start();
                 if (!started) {
@@ -59,7 +61,17 @@ public final class WeatherHook implements IXposedHookLoadPackage {
         pending = worker.schedule(WeatherHook::publish, 1500, TimeUnit.MILLISECONDS);
     }
 
-    private static void publish() {
+    private static synchronized void publishCloud() throws Exception {
+        Context context = target;
+        LinkClient link = client;
+        if (context == null || link == null) throw new IllegalStateException("weather_link_unavailable");
+        JSONObject snapshot = LocalCollector.collect(context, "weather");
+        if (!"ok".equals(snapshot.optString("status"))) throw new IllegalStateException("weather_snapshot_unavailable");
+        // Only publish the existing allowlisted projection, never native response JSON.
+        link.send(snapshot);
+    }
+
+    private static synchronized void publish() {
         Context context = target;
         LinkClient link = client;
         if (context == null) return;

@@ -7,6 +7,15 @@ import org.json.*;
 /** Deterministic presentation only; the persisted source snapshot is never modified. */
 public final class WeatherText {
  private WeatherText(){}
+ /** Cached MCP view, with observation time and refresh failure kept distinct from collection time. */
+ static String cached(JSONObject category,String cloudError,long cloudOkAt)throws Exception {
+  StringBuilder prefix=new StringBuilder("天气观测时间：").append(category.optString("source_updated_at","未知")).append('\n');
+  if(!cloudError.isEmpty())prefix.append("云端刷新失败，以下为缓存：").append(cloudError).append('\n');
+  else if(cloudOkAt<=0)prefix.append("定时云端刷新尚未完成，以下为源应用缓存\n");
+  else prefix.append("最近云端刷新完成：").append(Instant.ofEpochMilli(cloudOkAt).atZone(ZoneId.systemDefault())).append('\n');
+  if("stale".equals(category.optString("status")))prefix.append("注意：缓存已过时，").append(category.optString("reason")).append('\n');
+  return prefix.append(compact(category.optJSONObject("fields"),category.optString("collected_at",""))).toString();
+ }
  public static String snapshot(String value)throws Exception{
   try{return snapshotChecked(value);}catch(Exception e){throw new IllegalArgumentException("天气快照格式或整理结果无效，已停止，未截断事实");}
  }

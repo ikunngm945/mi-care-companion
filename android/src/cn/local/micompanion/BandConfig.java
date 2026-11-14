@@ -18,11 +18,17 @@ final class BandConfig {
     final String mac;
     final String authKey;
     final String model;
+    final String sourceScope;
 
     BandConfig(String mac, String authKey, String model) {
+        this(mac, authKey, model, "");
+    }
+
+    BandConfig(String mac, String authKey, String model, String sourceScope) {
         this.mac = mac;
         this.authKey = authKey;
         this.model = model;
+        this.sourceScope = sourceScope;
     }
 
     static BandConfig fromJson(JSONObject object) {
@@ -30,14 +36,14 @@ final class BandConfig {
         String key = object.optString("key", object.optString("auth_key", "")).trim().toLowerCase(Locale.US);
         String model = object.optString("model", "").trim();
         if (!mac.matches("[0-9A-F]{2}(:[0-9A-F]{2}){5}") || !key.matches("[0-9a-f]{32}")) return null;
-        return new BandConfig(mac, key, model);
+        return new BandConfig(mac, key, model, object.optString("source_scope", ""));
     }
 
     static BandConfig save(Context context, BandConfig config) {
         if (config == null) return null;
         context.getSharedPreferences(PREFS, 0).edit()
                 .putString(KEY_MAC, config.mac).putString(KEY_AUTH, config.authKey)
-                .putString(KEY_MODEL, config.model).commit();
+                .putString(KEY_MODEL, config.model).putString("source_scope", config.sourceScope).commit();
         return config;
     }
 
@@ -45,7 +51,8 @@ final class BandConfig {
         String mac = context.getSharedPreferences(PREFS, 0).getString(KEY_MAC, "");
         String key = context.getSharedPreferences(PREFS, 0).getString(KEY_AUTH, "");
         String model = context.getSharedPreferences(PREFS, 0).getString(KEY_MODEL, "");
-        if (!mac.isEmpty() && !key.isEmpty()) return new BandConfig(mac, key, model);
+        if (!mac.isEmpty() && !key.isEmpty()) return new BandConfig(mac, key, model,
+                context.getSharedPreferences(PREFS, 0).getString("source_scope", ""));
         return null;
     }
 
@@ -87,7 +94,7 @@ final class BandConfig {
                                 context.getSharedPreferences(PREFS, 0).edit()
                                         .putString(KEY_MAC, config.mac)
                                         .putString(KEY_AUTH, config.authKey)
-                                        .putString(KEY_MODEL, config.model).apply();
+                                        .putString(KEY_MODEL, config.model).remove("source_scope").apply();
                                 return config;
                             }
                         } catch (Exception ignored) { }

@@ -46,7 +46,7 @@ final class HealthQuery {
         long[] window = window(request, dayStart, dayEnd);
         long start = window[0], end = window[1];
         if (dayStart >= now / 1000L) return missing(action, date, zone, "查询日期还没有开始");
-        if (action.startsWith("sleep_")) return sleep(db, action, date, start, end, has(request, "start_time") || end < dayEnd, zone);
+        if (action.startsWith("sleep_")) return sleep(db, action, date, start, end, has(request, "start_time") || has(request, "end_time"), zone);
         Metric metric = Metric.of(action);
         if (metric == null) throw new IllegalArgumentException("未知查询类型");
         return vitals(db, action, metric, date, start, end, zone);
@@ -285,40 +285,55 @@ final class HealthQuery {
 
     private static JSONObject sleep(HealthSource.Reader db, String action, String date, long start, long end, boolean timeWindow, TimeZone zone) throws Exception {
         boolean detail = "sleep_detail".equals(action);
+        long dayStart = LocalDate.parse(date).atStartOfDay(zone.toZoneId()).toEpochSecond();
+        long dayEnd = LocalDate.parse(date).plusDays(1).atStartOfDay(zone.toZoneId()).toEpochSecond();
         JSONArray rows = db.query("SELECT value,time,0 AS updateTime,endTime,sid,key FROM sleep_segment "
-                + "WHERE isDeleted=0 AND key='sleep' AND endTime>? ORDER BY endTime ASC LIMIT " + (MAX_SESSIONS + 1),
-                new String[]{Long.toString(start)});
+                + "WHERE isDeleted=0 AND key='sleep' AND endTime>? AND endTime<=? ORDER BY endTime ASC LIMIT " + (MAX_SESSIONS + 1),
+                new String[]{Long.toString(dayStart), Long.toString(dayEnd + 60)});
         if (rows == null || rows.length() > MAX_SESSIONS) throw new IllegalArgumentException("睡眠记录过多");
-        List<long[]> heart = points(db, "hr_record", "key IN ('heart_rate','single_heart_rate')", "bpm", start, end, 1, 300);
-        List<long[]> oxygen = points(db, "spo2_record", "key IN ('spo2','single_spo2')", "spo2", start, end, 1, 100);
-        TreeMap<Long, JSONObject> sessions = new TreeMap<>();
-        HashSet<String> seen = new HashSet<>();
+        List<JSONObject> candidates = new ArrayList<>();
+        long sampleStart = start;
         for (int i = 0; i < rows.length(); i++) {
             try {
-                JSONObject row = rows.getJSONObject(i), raw = new JSONObject(row.getString("value"));
+                JSONObject raw = new JSONObject(rows.getJSONObject(i).getString("value"));
                 long bed = number(raw, "bedtime"), wake = number(raw, "wake_up_time");
-                if (bed <= 0 || wake <= bed || wake <= start || bed >= end) continue;
+                if (bed <= 0 || wake <= bed || wake < dayStart || wake >= dayEnd) continue;
+                if (timeWindow && (wake <= start || bed >= end)) continue;
+                candidates.add(raw);
+                if (!timeWindow) sampleStart = Math.min(sampleStart, bed);
+            } catch (Exception ignored) { }
+        }
+        List<long[]> heart = points(db, "hr_record", "key IN ('heart_rate','single_heart_rate')", "bpm", sampleStart, end, 1, 300);
+        List<long[]> oxygen = points(db, "spo2_record", "key IN ('spo2','single_spo2')", "spo2", sampleStart, end, 1, 100);
+        TreeMap<Long, JSONObject> sessions = new TreeMap<>();
+        HashSet<String> seen = new HashSet<>();
+        for (JSONObject raw : candidates) {
+            try {
+                long bed = number(raw, "bedtime"), wake = number(raw, "wake_up_time");
                 String signature = bed + ":" + wake + ":" + String.valueOf(raw.opt("items")) + ":" + String.valueOf(raw.opt("sleepSegments"));
                 if (!seen.add(signature)) continue;
                 JSONObject session = session(raw, bed, wake, timeWindow ? start : Math.min(start, bed), end, detail, heart, oxygen, zone);
-                if (detail && session.getJSONArray("segments").length() == 0) continue;
                 sessions.put(wake + (sessions.containsKey(wake) ? 1 : 0), session);
             } catch (Exception ignored) { }
         }
         if (sessions.isEmpty()) return missing(action, date, zone, "当天没有可用的睡眠记录");
         JSONArray out = new JSONArray();
         long total = 0, deep = 0, light = 0, rem = 0, awake = 0;
+        boolean durationKnown = true, allStagesAvailable = true;
         for (JSONObject session : sessions.values()) {
             out.put(session);
             JSONObject s = session.getJSONObject("summary");
+            durationKnown &= !s.isNull("total_minutes");
+            allStagesAvailable &= s.optBoolean("stages_available", true);
             total += s.optLong("total_minutes", 0); deep += s.optLong("deep_minutes", 0);
             light += s.optLong("light_minutes", 0); rem += s.optLong("rem_minutes", 0);
             awake += s.optLong("awake_minutes", 0);
         }
         JSONObject result = new JSONObject().put("status", "ok").put("action", action).put("date", date)
                 .put("timezone", zone.getID()).put("mode", detail ? "detail" : "summary")
-                .put("sessions", out).put("totals", new JSONObject().put("total_minutes", total)
-                        .put("deep_minutes", deep).put("light_minutes", light).put("rem_minutes", rem).put("awake_minutes", awake));
+                .put("sessions", out).put("totals", new JSONObject().put("total_minutes", durationKnown ? total : JSONObject.NULL)
+                        .put("deep_minutes", deep).put("light_minutes", light).put("rem_minutes", rem).put("awake_minutes", awake)
+                        .put("stages_available", allStagesAvailable));
         if (detail) {
             JSONArray all = new JSONArray();
             for (JSONObject session : sessions.values()) {
@@ -363,20 +378,28 @@ final class HealthQuery {
                 }
             }
         }
-        if (!stages) {
+        boolean wholeSession = windowStart <= bed && windowEnd >= wake;
+        if (!stages && wholeSession) {
             deep = raw.optLong("sleep_deep_duration", 0); light = raw.optLong("sleep_light_duration", 0);
             rem = raw.optLong("sleep_rem_duration", 0); awake = raw.optLong("sleep_awake_duration", 0);
         }
         long total = deep + light + rem;
-        JSONObject summary = new JSONObject().put("total_minutes", total).put("deep_minutes", deep)
-                .put("light_minutes", light).put("rem_minutes", rem).put("awake_minutes", awake);
+        boolean stagesAvailable = stages || total > 0;
+        if (!stages && wholeSession) {
+            long nativeMinutes = number(raw, "duration");
+            if (nativeMinutes > 0 && nativeMinutes <= (wake - bed + 59) / 60) total = nativeMinutes;
+        }
+        Object totalMinutes = stages || (wholeSession && total > 0) ? total : JSONObject.NULL;
+        JSONObject summary = new JSONObject().put("total_minutes", totalMinutes).put("deep_minutes", deep)
+                .put("light_minutes", light).put("rem_minutes", rem).put("awake_minutes", awake)
+                .put("stages_available", stagesAvailable);
         JSONObject hr = range(heart, bed, wake, "min", "max"); if (hr != null) {
             summary.put("heart_rate_min", hr.getInt("min")); summary.put("heart_rate_max", hr.getInt("max"));
         }
         JSONObject sp = range(oxygen, bed, wake, "min", "max"); if (sp != null) {
             summary.put("spo2_min", sp.getInt("min")); summary.put("spo2_max", sp.getInt("max"));
         }
-        JSONObject out = new JSONObject().put("start", iso(bed, zone)).put("end", iso(wake, zone)).put("total_minutes", total).put("summary", summary);
+        JSONObject out = new JSONObject().put("start", iso(bed, zone)).put("end", iso(wake, zone)).put("total_minutes", totalMinutes).put("summary", summary);
         if (detail) out.put("segments", segments);
         return out;
     }

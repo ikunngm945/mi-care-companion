@@ -42,6 +42,21 @@ public final class ScreenCollectionTest {
   check(top.getJSONArray("top_apps").length()==10&&top.getJSONArray("top_apps").getJSONObject(0).getString("package").equals("app11"),"app top10 unchanged and duration sorted");
   JSONObject empty=UsageCollector.collect((a,b)->Collections.<UsageCollector.Event>emptyList().iterator(),start,end,end);
   check(empty.getString("status").equals("missing"),"empty events do not invent usage");
+  TimeZone originalZone=TimeZone.getDefault();
+  try {
+   TimeZone.setDefault(TimeZone.getTimeZone("Asia/Shanghai"));
+   long midnight=java.time.Instant.parse("2026-11-12T16:00:00Z").toEpochMilli();
+   long now=midnight+10*3600000L;
+   JSONObject today=UsageCollector.collectToday((a,b)->Arrays.asList(
+    new UsageCollector.Event(midnight-1800000,15,null),new UsageCollector.Event(midnight-1800000,18,null),
+    new UsageCollector.Event(midnight+1800000,16,null),new UsageCollector.Event(midnight+9*3600000L,15,null),
+    new UsageCollector.Event(midnight+9*3600000L+300000,18,null)).iterator(),now);
+   JSONObject daily=today.getJSONObject("fields");
+   check(today.getString("date").equals("2026-11-13"),"today uses the phone's local date");
+   check(daily.getString("interval_start").equals("2026-11-13T00:00:00.000+08:00"),"today starts at local midnight");
+   check(daily.getLong("screen_on_ms")==5400000 && daily.getLong("unlocked_use_ms")==5100000,
+    "today clips prior-night usage and includes the currently open session");
+  } finally {TimeZone.setDefault(originalZone);}
   System.out.println("ScreenCollection: "+checks+" checks passed");
  }
 }

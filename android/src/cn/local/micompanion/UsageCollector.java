@@ -26,8 +26,24 @@ public final class UsageCollector {
  public static JSONObject collect(Context c,long start,long end) {
   return collect(c,start,end,System.currentTimeMillis());
  }
+ public static JSONObject collectToday(Context c) {
+  return collectToday(reader(c),System.currentTimeMillis());
+ }
+ static JSONObject collectToday(Reader reader,long now) {
+  java.time.ZonedDateTime at=java.time.Instant.ofEpochMilli(now).atZone(java.time.ZoneId.systemDefault());
+  long start=at.toLocalDate().atStartOfDay(at.getZone()).toInstant().toEpochMilli();
+  JSONObject result=collect(reader,start,now,now);
+  try {
+   result.put("date",at.toLocalDate().toString());
+   result.getJSONObject("fields").put("statistical_basis","UsageEvents 当地今日区间统计；源事件缺失可能低估，与系统数字健康口径可能不同");
+  } catch(JSONException ignored) { }
+  return result;
+ }
  static JSONObject collect(Context c,long start,long end,long now) {
-  return collect((a,b)->{
+  return collect(reader(c),start,end,now);
+ }
+ private static Reader reader(Context c) {
+  return (a,b)->{
    AppOpsManager ops=(AppOpsManager)c.getSystemService(Context.APP_OPS_SERVICE);
    if(ops.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS,Process.myUid(),c.getPackageName())!=AppOpsManager.MODE_ALLOWED)
     throw new SecurityException();
@@ -38,7 +54,7 @@ public final class UsageCollector {
     public boolean hasNext(){return events.hasNextEvent();}
     public Event next(){if(!events.getNextEvent(event))throw new NoSuchElementException();return new Event(event.getTimeStamp(),event.getEventType(),event.getPackageName());}
    };
-  },start,end,now);
+  };
  }
  static JSONObject collect(Reader reader,long start,long end,long now) {
   JSONObject o=base("android");

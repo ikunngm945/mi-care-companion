@@ -2,6 +2,9 @@ package cn.local.micompanion.health;
 
 import android.app.Application;
 import android.content.Context;
+import android.content.BroadcastReceiver;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.database.sqlite.SQLiteDatabase;
 import cn.local.micompanion.LocalCollector;
 import cn.local.micompanion.HealthSource;
@@ -21,7 +24,7 @@ import java.util.Base64;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 
-/** Reads the health app only; manual sync_database requests copy data to the main app. */
+/** Authenticated band import and debounced health-database replication to the main app. */
 public final class HealthHook implements IXposedHookLoadPackage {
     private static final ScheduledExecutorService worker = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread thread = new Thread(r, "mi-companion-health");
@@ -33,6 +36,9 @@ public final class HealthHook implements IXposedHookLoadPackage {
     private static volatile boolean databaseSent;
     private static volatile boolean fitnessSent;
     private static volatile boolean databaseBusy;
+    private static volatile BandFileImporter importer;
+    private static java.util.concurrent.ScheduledFuture<?> refresh;
+    private static boolean summaryNeeded;
 
     @Override public void handleLoadPackage(final XC_LoadPackage.LoadPackageParam lp) throws Throwable {
         if (!"com.mi.health".equals(lp.packageName)) return;
@@ -51,6 +57,7 @@ public final class HealthHook implements IXposedHookLoadPackage {
             @Override protected void afterHookedMethod(MethodHookParam param) {
                 Context app = (Context)param.thisObject;
                 target = app;
+                importer = new BandFileImporter(app, lp.classLoader, () -> debounceDatabase(true));
                 client = LinkClient.shared(app, "health");
                 client.setQueryHandler(query -> {
                     if ("sync_database".equals(query.optString("action"))) {
@@ -58,12 +65,22 @@ public final class HealthHook implements IXposedHookLoadPackage {
                         return new JSONObject().put("status", "ok").put("action", "sync_database");
                     }
                     if ("band_key".equals(query.optString("action"))) return readBandKey(app);
+                    if ("band_import".equals(query.optString("action"))
+                            || "band_import_status".equals(query.optString("action"))
+                            || "band_import_finish".equals(query.optString("action"))) return importer.handle(query);
                     return HealthQueryService.query(app, query);
                 });
-                // Manual-only: opening Mi Fitness must not copy the database or push a snapshot.
-                // The user explicitly triggers a transfer with the main app's sync button (or
-                // a sync_database query from the main app, including the band-channel fallback).
-                // Keep the link alive for the band_key query.
+                client.setConnectedHandler(() -> debounceDatabase(false));
+                IntentFilter changes = new IntentFilter("recent_data_changed_broadcast");
+                changes.addAction("history_fitness_data_changed_broadcast");
+                BroadcastReceiver receiver = new BroadcastReceiver() {
+                    @Override public void onReceive(Context context, Intent intent) {
+                        if (!intent.getBooleanExtra("mi_companion_import", false)) debounceDatabase(false);
+                    }
+                };
+                if (android.os.Build.VERSION.SDK_INT >= 33)
+                    app.registerReceiver(receiver, changes, Context.RECEIVER_NOT_EXPORTED);
+                else app.registerReceiver(receiver, changes);
                 client.start();
             }
         });
@@ -90,7 +107,8 @@ public final class HealthHook implements IXposedHookLoadPackage {
                             String key = object.optString("encrypt_key", "").trim().toLowerCase(java.util.Locale.US);
                             if (mac.matches("[0-9A-F]{2}(:[0-9A-F]{2}){5}") && key.matches("[0-9a-f]{32}")) {
                                 return new JSONObject().put("status", "ok").put("mac", mac)
-                                        .put("key", key).put("model", object.optString("model", ""));
+                                        .put("key", key).put("model", object.optString("model", ""))
+                                        .put("source_scope", importer.sourceScope());
                             }
                         } catch (Exception ignored) { }
                     }
@@ -106,10 +124,29 @@ public final class HealthHook implements IXposedHookLoadPackage {
         }
     }
 
+    private static synchronized void debounceDatabase(boolean needsSummary) {
+        summaryNeeded |= needsSummary;
+        if (refresh != null) refresh.cancel(false);
+        refresh = worker.schedule(() -> {
+            synchronized (HealthHook.class) {
+                refresh = null;
+                if (importer != null && importer.pending()) { debounceDatabase(false); return; }
+                if (summaryNeeded) {
+                    summaryNeeded = false;
+                    BandFileImporter.broadcastChanged(target);
+                    // Let the native aggregation receiver finish before copying its database.
+                    refresh = worker.schedule(() -> requestDatabase(), 2, java.util.concurrent.TimeUnit.SECONDS);
+                    return;
+                }
+            }
+            requestDatabase();
+        }, 5, java.util.concurrent.TimeUnit.SECONDS);
+    }
+
     private static void requestDatabase() {
-        databaseSent = false;
-        fitnessSent = false;
         worker.execute(() -> {
+            databaseSent = false;
+            fitnessSent = false;
             publishDatabase();
             publish();
         });
@@ -122,7 +159,7 @@ public final class HealthHook implements IXposedHookLoadPackage {
         if (context == null || link == null || !link.status().connected) return;
         File source;
         try {
-            File dir = HealthSource.account(context);
+            File dir = importer == null ? null : importer.accountDirectory();
             source = dir == null ? null : new File(dir, "fitness_data");
         } catch (Throwable ignored) { return; }
         if (source == null || !source.isFile()) return;

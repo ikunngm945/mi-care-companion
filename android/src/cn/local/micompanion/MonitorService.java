@@ -19,8 +19,13 @@ public final class MonitorService extends Service {
  private static volatile boolean serviceRunning;
  private final Handler h=new Handler(Looper.getMainLooper());
  private final ExecutorService net=Executors.newSingleThreadExecutor();
+ private final ExecutorService weatherWorker=Executors.newSingleThreadExecutor();
+ private final java.util.concurrent.atomic.AtomicBoolean weatherBusy=new java.util.concurrent.atomic.AtomicBoolean();
  private static final long BAND_INTERVAL_MS=10*60*1000L;
  private final java.util.concurrent.atomic.AtomicBoolean bandBusy=new java.util.concurrent.atomic.AtomicBoolean();
+ private final java.util.concurrent.atomic.AtomicBoolean healthSyncBusy=new java.util.concurrent.atomic.AtomicBoolean();
+ private volatile boolean healthWasConnected;
+ private volatile String healthSourceScope="";
  private ScheduledExecutorService bandSchedule;
  private TriggerState state;
  private SharedPreferences p;
@@ -37,7 +42,10 @@ public final class MonitorService extends Service {
   return settings.getString("status","监控未启动")+(error.isEmpty()?"":"\n最近自动事件提示："+error)
    +(linkError.isEmpty()?"":"\n数据连接："+linkError)
    +(pullError.isEmpty()?"":"\n自动拉起："+pullError)
-   +(settings.getString("band_auto_error","").isEmpty()?"":"\n手环："+settings.getString("band_auto_error",""));
+   +(settings.getString("band_auto_error","").isEmpty()?"":"\n手环："+settings.getString("band_auto_error",""))
+   +(settings.getString("band_sync_error","").isEmpty()?"":"\n健康补同步："+settings.getString("band_sync_error",""))
+    +(settings.getString("weather_cloud_error","").isEmpty()?"":"\n天气刷新："+settings.getString("weather_cloud_error",""))
+    +(settings.getBoolean("weather_alarm_exact",false)?"":"\n天气定时：未获精确闹钟权限，系统可能延迟整点刷新");
  }
  public static void refresh(Context c){
   if(current()==null)return;
@@ -159,17 +167,74 @@ public final class MonitorService extends Service {
  private org.json.JSONObject queryWeather(org.json.JSONObject request)throws Exception{
   org.json.JSONObject snapshot=SnapshotStore.read(this,"weather");
   String status=snapshot.optString("status","error");
-  if(!"ok".equals(status)){
+  if(!"ok".equals(status)&&!"stale".equals(status)){
    String reason=snapshot.optString("reason","天气数据不可用");
    return new org.json.JSONObject().put("status",status).put("text","天气数据不可用："+reason);
   }
-  String text=WeatherText.compact(snapshot.optJSONObject("fields"),snapshot.optString("collected_at",""));
+  String text=WeatherText.cached(snapshot,p.getString("weather_cloud_error",""),p.getLong("weather_cloud_ok_at",0));
   return new org.json.JSONObject().put("status","ok").put("text",text);
+ }
+ private void refreshWeatherCloud(){
+  if(!weatherBusy.compareAndSet(false,true))return;
+  WeatherAlarm.hold(this);
+  try{weatherWorker.execute(()->{
+   ContentProviderClient weatherLease=null;
+   try{
+    // Stable provider reference inherits this foreground service's priority for the bounded refresh.
+    try{weatherLease=getContentResolver().acquireContentProviderClient("weather");}catch(RuntimeException unavailable){}
+    long startedAt=System.currentTimeMillis();
+    p.edit().putLong("weather_cloud_attempt_at",startedAt).apply();
+    LinkServer server=link;
+    if(server==null)throw new IllegalStateException("本机数据连接未启动");
+    if(!server.status("weather").connected){
+     if(weatherLease==null&&!TargetRecovery.wakeWeatherSync(this))throw new IllegalStateException("天气未连接；后台Provider不可用且无Root或Shizuku唤醒权限");
+     long deadline=SystemClock.elapsedRealtime()+15000;
+     while(!server.status("weather").connected&&SystemClock.elapsedRealtime()<deadline)Thread.sleep(250);
+    }
+    if(!server.status("weather").connected)throw new IllegalStateException("天气模块未连接，请检查模块配置");
+    org.json.JSONObject result=WeatherCloudRefresh.run(request->server.query("weather",request,5000),SystemClock::elapsedRealtime,Thread::sleep);
+    if(!"ok".equals(result.optString("status")))throw new IllegalStateException(result.optString("reason","天气云端刷新失败"));
+    org.json.JSONObject received=SnapshotStore.read(this,"weather");
+    org.json.JSONObject fields=received.optJSONObject("fields");
+    if(fields==null||fields.optLong("cache_updated_at_epoch_ms",0)<startedAt)
+     throw new IllegalStateException("原生天气已刷新，但助手尚未收到新缓存；当前仍显示缓存");
+    p.edit().putLong("weather_cloud_ok_at",System.currentTimeMillis()).remove("weather_cloud_error").apply();
+   }catch(Exception error){
+    if(error instanceof InterruptedException)Thread.currentThread().interrupt();
+    p.edit().putString("weather_cloud_error",error.getMessage()==null?"天气云端刷新失败":error.getMessage()).apply();
+   }finally{if(weatherLease!=null)weatherLease.close();weatherBusy.set(false);WeatherAlarm.release();}
+  });}catch(RejectedExecutionException stopped){weatherBusy.set(false);WeatherAlarm.release();}
  }
  private void startBandSchedule(){
   if(bandSchedule!=null)return;
   bandSchedule=Executors.newSingleThreadScheduledExecutor(r->{Thread t=new Thread(r,"band-auto");t.setDaemon(true);return t;});
   bandSchedule.scheduleWithFixedDelay(this::bandAuto,BAND_INTERVAL_MS,BAND_INTERVAL_MS,TimeUnit.MILLISECONDS);
+  bandSchedule.scheduleWithFixedDelay(this::reconcileHealth,5_000,30_000,TimeUnit.MILLISECONDS);
+ }
+
+ private void reconcileHealth(){
+  LinkServer server=link;
+  boolean connected=server!=null&&server.status("health").connected;
+  if(!connected){healthWasConnected=false;return;}
+  if(bandBusy.get()||!healthSyncBusy.compareAndSet(false,true))return;
+  try{
+   BandConfig paired=provisionBandKey();
+   String scope=paired==null?"":paired.sourceScope;
+   if(!healthWasConnected||!scope.equals(healthSourceScope)){
+    server.query("health",new org.json.JSONObject().put("action","sync_database"),10_000);
+    healthWasConnected=true;healthSourceScope=scope;
+   }
+   org.json.JSONObject result=BandFileSync.sync(this,server);
+   p.edit().putString("band_sync_error",result.optString("error","")).putLong("band_sync_at",System.currentTimeMillis())
+     .putString("band_sync_status",result.toString()).apply();
+  }catch(Exception failure){
+   p.edit().putString("band_sync_error",failure.getMessage()==null?"健康补同步失败":failure.getMessage()).apply();
+  }finally{healthSyncBusy.set(false);}
+ }
+
+ static void requestHealthReconcile(Context context){
+  MonitorService service=instance;
+  if(service!=null&&service.bandSchedule!=null)service.bandSchedule.execute(service::reconcileHealth);
  }
 
  static void runBandAutoNow(Context context){
@@ -188,8 +253,13 @@ public final class MonitorService extends Service {
    if(config==null)config=provisionBandKey();
    if(refresh&&config!=null){BandConfig fresh=provisionBandKey();if(fresh!=null)config=fresh;}
    if(config==null)throw new IllegalStateException("缺少手环密钥");
+   if(link!=null&&link.status("health").connected){
+    BandConfig paired=provisionBandKey();
+    if(paired!=null&&paired.mac.equals(config.mac))config=paired;
+   }
    org.json.JSONObject sync=BandSync.sync(this,config);
    BandStore.put(this,sync);
+   requestHealthReconcile(this);
    p.edit().remove("band_auto_error").putBoolean("band_token_expired",false).putBoolean("band_retry_key",false)
      .putBoolean("band_health_fallback",false).putLong("band_auto_at",System.currentTimeMillis()).putString("band_auto_source","band").apply();
   }catch(Exception error){
@@ -235,8 +305,13 @@ public final class MonitorService extends Service {
    MonitorService current=instance;
    if(config==null&&current!=null)config=current.provisionBandKey();
    if(config==null)throw new IllegalStateException("缺少手环密钥；请先连接一次健康模块，或打开运动健康后重试");
+   if(current!=null&&link!=null&&link.status("health").connected){
+    BandConfig paired=current.provisionBandKey();
+    if(paired!=null&&paired.mac.equals(config.mac))config=paired;
+   }
    org.json.JSONObject sync=BandSync.sync(context,config);
    BandStore.put(context,sync);
+   requestHealthReconcile(context);
    context.getSharedPreferences("monitor",0).edit().remove("band_auto_error")
      .putBoolean("band_token_expired",false).putBoolean("band_retry_key",false)
      .putString("band_auto_source","band").putBoolean("band_health_fallback",false).apply();
@@ -262,6 +337,7 @@ public final class MonitorService extends Service {
   }
  }
  private org.json.JSONObject queryHealth(org.json.JSONObject request)throws Exception{
+  if("screen_usage".equals(request.optString("action")))return UsageCollector.collectToday(this);
   if("sync_database".equals(request.optString("action")))return requestDatabaseSync(this);
   if(HealthDatabaseStore.available(this))return HealthDatabaseStore.query(this,request);
   LinkServer server=link;
@@ -284,6 +360,7 @@ public final class MonitorService extends Service {
   updateNotification();
   startLink();
   startBandSchedule();
+  WeatherAlarm.schedule(this);
   state=TriggerState.decode(p.getString("state",""));
   boot=bootCount();restore(SystemClock.elapsedRealtime(),System.currentTimeMillis(),on(),unlocked());
   IntentFilter f=new IntentFilter();f.addAction(Intent.ACTION_SCREEN_OFF);f.addAction(Intent.ACTION_SCREEN_ON);f.addAction(Intent.ACTION_USER_PRESENT);
@@ -291,7 +368,8 @@ public final class MonitorService extends Service {
   h.post(tick);
  }
  @Override public int onStartCommand(Intent i,int flags,int id){
-  if(i!=null&&ACTION_RELOAD_LINK.equals(i.getAction()))reloadLink();
+  if(i!=null&&WeatherAlarm.ACTION.equals(i.getAction())){WeatherAlarm.schedule(this);refreshWeatherCloud();}
+  else if(i!=null&&ACTION_RELOAD_LINK.equals(i.getAction()))reloadLink();
   else if(i!=null&&ACTION_REFRESH.equals(i.getAction()))updateNotification();
   else if(link==null)startLink();
   return START_STICKY;
@@ -303,7 +381,8 @@ public final class MonitorService extends Service {
   if(!p.getBoolean("enabled",false)){state.restart();p.edit().putString("state",state.encode()).remove("boot").remove("last_elapsed").remove("last_wall").commit();}
   ScheduledExecutorService schedule=bandSchedule;bandSchedule=null;if(schedule!=null)schedule.shutdownNow();
   // A system stop keeps the last observed checkpoint for evidence-based same-boot recovery.
-  net.shutdown();super.onDestroy();
+  if(!p.getBoolean("service_enabled",false))WeatherAlarm.cancel(this);
+  weatherWorker.shutdownNow();net.shutdown();super.onDestroy();
  }
  @Override public IBinder onBind(Intent i){return null;}
  public static final class Boot extends BroadcastReceiver {

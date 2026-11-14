@@ -169,7 +169,7 @@ public final class McpServer {
         String name = params.optString("name", "");
         JSONObject arguments = params.optJSONObject("arguments");
         if (arguments == null) {
-            if (!"weather".equals(name)) throw new IllegalArgumentException("缺少 arguments");
+            if (!"weather".equals(name) && !"screen_usage".equals(name)) throw new IllegalArgumentException("缺少 arguments");
             arguments = new JSONObject();
         }
         JSONObject result = new JSONObject();
@@ -180,6 +180,12 @@ public final class McpServer {
                 JSONObject data = weatherGateway.query(arguments);
                 text = data == null ? "天气数据不可用" : data.optString("text", "天气数据不可用");
                 result.put("isError", data == null || !"ok".equals(data.optString("status")));
+            } else if ("screen_usage".equals(name)) {
+                if (arguments.length() != 0) throw new IllegalArgumentException("屏幕使用时长工具无需参数，只查询今天");
+                JSONObject data = gateway.query(new JSONObject().put("action", "screen_usage"));
+                boolean available = data != null && "ok".equals(data.optString("status"));
+                text = available ? View.screen(data) : "屏幕使用时长不可用：" + (data == null ? "没有数据" : data.optString("reason", "没有数据"));
+                result.put("isError", !available);
             } else if ("health".equals(name)) {
                 Action action = Action.of(arguments.optString("action", ""));
                 if (action == null) throw new IllegalArgumentException("未知 action");
@@ -226,6 +232,13 @@ public final class McpServer {
                 .put(new JSONObject()
                         .put("name", "weather")
                         .put("description", "查询天气模块最近推送到本机的天气；返回今天当前天气和逐小时预报，不自动打开天气应用")
+                        .put("inputSchema", new JSONObject()
+                                .put("type", "object")
+                                .put("properties", new JSONObject())
+                                .put("additionalProperties", false)))
+                .put(new JSONObject()
+                        .put("name", "screen_usage")
+                        .put("description", "查询手机当地今天零点到现在的屏幕亮屏时长和解锁使用时长；无需参数，缺少使用情况访问权限会明确提示")
                         .put("inputSchema", new JSONObject()
                                 .put("type", "object")
                                 .put("properties", new JSONObject())
@@ -301,6 +314,15 @@ public final class McpServer {
                 if (action.startsWith("exercise_")) return exercise(data, action.endsWith("detail"));
                 return vitals(data);
             } catch (Exception e) { return "数据格式不完整"; }
+        }
+
+        private static String screen(JSONObject data) throws Exception {
+            JSONObject fields = data.getJSONObject("fields");
+            return "今天 " + data.getString("date") + " 屏幕使用时长（" + fields.getString("timezone") + "）\n"
+                    + "统计范围：" + clock(fields.getString("interval_start")) + "～" + clock(fields.getString("interval_end")) + "\n"
+                    + "亮屏时长：" + durationSeconds(fields.getLong("screen_on_ms") / 1000) + "\n"
+                    + "解锁使用时长：" + durationSeconds(fields.getLong("unlocked_use_ms") / 1000) + "\n"
+                    + fields.optString("statistical_basis");
         }
 
         private static String days(JSONObject data, JSONArray days) throws Exception {
@@ -431,11 +453,12 @@ public final class McpServer {
             if (sessions == null) return out.append("没有睡眠段").toString();
             for (int i = 0; i < sessions.length(); i++) {
                 JSONObject session = sessions.getJSONObject(i);
-                out.append("睡眠会话 ").append(i + 1).append("：").append(clock(session.optString("start")))
-                        .append("～").append(clock(session.optString("end"))).append("（共").append(duration(session.optLong("total_minutes"))).append("）\n");
+                out.append("睡眠会话 ").append(i + 1).append("：").append(stamp(session.optString("start")))
+                        .append("～").append(stamp(session.optString("end"))).append("（共").append(totalDuration(session)).append("）\n");
                 JSONObject summary = session.optJSONObject("summary");
                 if (summary != null) {
-                    out.append("清醒 ").append(duration(summary.optLong("awake_minutes")))
+                    if (!summary.optBoolean("stages_available", true)) out.append("分期不可用");
+                    else out.append("清醒 ").append(duration(summary.optLong("awake_minutes")))
                             .append("；快速眼动 ").append(duration(summary.optLong("rem_minutes")))
                             .append("；浅睡 ").append(duration(summary.optLong("light_minutes")))
                             .append("；深睡 ").append(duration(summary.optLong("deep_minutes")));
@@ -457,14 +480,7 @@ public final class McpServer {
                     }
                 }
             }
-            JSONObject totals = data.optJSONObject("totals");
-            if (sessions.length() > 1 && totals != null) {
-                out.append("合计：总睡眠 ").append(duration(totals.optLong("total_minutes")))
-                        .append("；清醒 ").append(duration(totals.optLong("awake_minutes")))
-                        .append("；快速眼动 ").append(duration(totals.optLong("rem_minutes")))
-                        .append("；浅睡 ").append(duration(totals.optLong("light_minutes")))
-                        .append("；深睡 ").append(duration(totals.optLong("deep_minutes"))).append('\n');
-            }
+            if (sessions.length() > 1) appendSleepTotals(out, data);
             return out.toString();
         }
 
@@ -480,7 +496,18 @@ public final class McpServer {
                     for (int j = 0; nested != null && j < nested.length(); j++) segments.put(nested.getJSONObject(j));
                 }
             }
-            if (segments.length() == 0) return out.append("没有睡眠段").toString();
+            boolean unstaged = false;
+            JSONArray sessions = data.optJSONArray("sessions");
+            for (int i = 0; sessions != null && i < sessions.length(); i++) {
+                JSONObject session = sessions.getJSONObject(i);
+                JSONObject summary = session.optJSONObject("summary");
+                if (summary == null || summary.optBoolean("stages_available", true)) continue;
+                unstaged = true;
+                out.append("睡眠会话 ").append(i + 1).append("：")
+                        .append(stamp(session.optString("start"))).append("～").append(stamp(session.optString("end")))
+                        .append("（共").append(totalDuration(session)).append("）\n分期不可用\n");
+            }
+            if (segments.length() == 0 && !unstaged) return out.append("没有睡眠段").toString();
             String zone = data.optString("timezone");
             for (int i = 0; i < segments.length(); i++) {
                 JSONObject segment = segments.getJSONObject(i);
@@ -504,12 +531,7 @@ public final class McpServer {
                         .append("；最高 ").append(clock(at(sp.optLong("max_at_epoch_seconds"), zone))).append('\n');
                 else out.append("血氧：无采样\n");
             }
-            JSONObject totals = data.optJSONObject("totals");
-            if (totals != null) out.append("合计：总睡眠 ").append(duration(totals.optLong("total_minutes")))
-                    .append("；清醒 ").append(duration(totals.optLong("awake_minutes")))
-                    .append("；快速眼动 ").append(duration(totals.optLong("rem_minutes")))
-                    .append("；浅睡 ").append(duration(totals.optLong("light_minutes")))
-                    .append("；深睡 ").append(duration(totals.optLong("deep_minutes"))).append('\n');
+            appendSleepTotals(out, data);
             return out.toString();
         }
 
@@ -548,6 +570,29 @@ public final class McpServer {
         private static String clock(String iso) {
             try { return OffsetDateTime.parse(iso).format(DateTimeFormatter.ofPattern("HH:mm")); }
             catch (Exception e) { return iso; }
+        }
+
+        private static void appendSleepTotals(StringBuilder out, JSONObject data) throws Exception {
+            JSONObject totals = data.optJSONObject("totals");
+            if (totals == null) return;
+            JSONArray sessions = data.optJSONArray("sessions");
+            boolean incomplete = false, known = sessions == null || sessions.length() == 0;
+            for (int i = 0; sessions != null && i < sessions.length(); i++) {
+                JSONObject summary = sessions.getJSONObject(i).optJSONObject("summary");
+                if (summary != null && !summary.optBoolean("stages_available", true)) incomplete = true;
+                else known = true;
+            }
+            out.append("合计：总睡眠 ").append(totalDuration(totals));
+            if (known) out.append("；清醒 ").append(duration(totals.optLong("awake_minutes")))
+                    .append("；快速眼动 ").append(duration(totals.optLong("rem_minutes")))
+                    .append("；浅睡 ").append(duration(totals.optLong("light_minutes")))
+                    .append("；深睡 ").append(duration(totals.optLong("deep_minutes")));
+            if (incomplete) out.append(known ? "；分期仅含已知数据" : "；分期不可用");
+            out.append('\n');
+        }
+
+        private static String totalDuration(JSONObject value) {
+            return value.isNull("total_minutes") ? "不可用" : duration(value.optLong("total_minutes"));
         }
 
         private static String duration(long minutes) {

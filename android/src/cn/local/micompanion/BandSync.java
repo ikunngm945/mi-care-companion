@@ -20,7 +20,7 @@ import org.json.JSONObject;
 final class BandSync {
     private BandSync() { }
 
-    static JSONObject sync(Context context, BandConfig config) throws Exception {
+    static synchronized JSONObject sync(Context context, BandConfig config) throws Exception {
         try {
             return syncOnce(context, config);
         } catch (Exception first) {
@@ -53,7 +53,21 @@ final class BandSync {
             }
             @Override public void onFile(byte[] file) {
                 lastHeard.set(System.currentTimeMillis());
-                try { saveRaw(context, file); } catch (Exception ignored) { }
+                try {
+                    StringBuilder id = new StringBuilder();
+                    for (int i = 0; i < 7; i++) id.append(String.format("%02x", file[i] & 0xff));
+                    android.content.SharedPreferences sources = context.getSharedPreferences("band_file_sources", 0);
+                    // Clear provenance first: a failed write must never inherit an older source.
+                    if (!sources.edit().remove(id.toString()).commit())
+                        throw new java.io.IOException("手环文件来源清理失败");
+                    saveRaw(new java.io.File(context.getFilesDir(), "band-files"), file);
+                    if (!config.sourceScope.isEmpty() && !sources.edit()
+                            .putString(id.toString(), config.sourceScope + "|" + config.mac).commit())
+                        throw new java.io.IOException("手环文件来源保存失败");
+                } catch (Exception failed) {
+                    error.set("手环原始文件保存失败");
+                    return;
+                }
                 try {
                     JSONObject parsedFile = BandData.parse(file);
                     if (parsedFile != null) {
@@ -109,16 +123,20 @@ final class BandSync {
         return result;
     }
 
-    private static void saveRaw(Context context, byte[] file) throws Exception {
-        if (file == null || file.length < 12) return;
+    static void saveRaw(java.io.File dir, byte[] file) throws Exception {
+        if (file == null || file.length < 13) throw new java.io.IOException("手环原始文件过短");
         StringBuilder name = new StringBuilder();
         for (int i = 0; i < 7; i++) name.append(String.format("%02x", file[i] & 0xff));
-        java.io.File dir = new java.io.File(context.getFilesDir(), "band-files");
-        if (!dir.isDirectory() && !dir.mkdirs()) return;
+        if (!dir.isDirectory() && !dir.mkdirs()) throw new java.io.IOException("无法创建手环文件目录");
         java.io.File out = new java.io.File(dir, name + ".bin");
-        if (out.isFile() && out.length() == file.length) return;
-        java.io.FileOutputStream stream = new java.io.FileOutputStream(out);
-        try { stream.write(file); } finally { stream.close(); }
+        if (out.isFile() && java.util.Arrays.equals(java.nio.file.Files.readAllBytes(out.toPath()), file)) return;
+        java.io.File pending = new java.io.File(dir, name + ".part");
+        try (java.io.FileOutputStream stream = new java.io.FileOutputStream(pending)) {
+            stream.write(file);
+            stream.getFD().sync();
+        }
+        java.nio.file.Files.move(pending.toPath(), out.toPath(), java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING);
     }
 
 }

@@ -10,6 +10,11 @@ public final class WeatherTextTest {
  static String facts(String f)throws Exception{return WeatherText.format(new JSONObject().put("fields",o(f)),"2026-10-17T08:00:00+08:00");}
  static void rejected(String s)throws Exception{try{WeatherText.snapshot(s);throw new AssertionError("unsafe JSON accepted");}catch(IllegalArgumentException expected){}}
  public static void main(String[]args)throws Exception{
+   JSONObject cached=new JSONObject().put("status","stale").put("source_updated_at","2026-11-13T22:00:00+08:00")
+    .put("collected_at","2026-11-14T00:10:00+08:00").put("fields",new JSONObject().put("temperature",new JSONObject().put("value",16).put("unit","℃")));
+   String fallback=WeatherText.cached(cached,"云端请求失败",0);
+   has(fallback,"缓存");has(fallback,"云端请求失败");has(fallback,"2026-11-13T22:00:00+08:00");has(fallback,"16℃");
+   has(WeatherText.cached(cached.put("status","ok"),"",0),"尚未完成");groups++;
   String input="{ \"usage\":{\"zero\":0},\"metadata\":{\"flag\":true},\"weather\":{\"reason\":\"保留原因\",\"fields\":{\"temperature\":{\"value\":33,\"unit\":\"℃\"},\"weather_code\":\"0\"},\"status\":\"ok\"}}";
   JSONObject result=o(WeatherText.snapshot(input));
   if(result.getJSONObject("weather").has("fields"))throw new AssertionError("weather fields not compacted");
