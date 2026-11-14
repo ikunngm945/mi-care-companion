@@ -35,6 +35,7 @@ final class HealthQuery {
     static JSONObject query(HealthSource.Reader db, JSONObject request, long now, TimeZone zone, File fitnessRoot) throws Exception {
         if (db == null) throw new IllegalArgumentException("健康数据库不可用");
         String action = request.optString("action", "");
+        if ("daily_summary".equals(action)) return dailySummary(db, request, now, zone);
         if (action.startsWith("exercise_")) return exercise(db, action, request, now, zone, fitnessRoot);
         if (action.endsWith("_summary") && (has(request, "start_date") || has(request, "end_date")))
             return rangeSummary(db, action, request, now, zone);
@@ -50,6 +51,84 @@ final class HealthQuery {
         Metric metric = Metric.of(action);
         if (metric == null) throw new IllegalArgumentException("未知查询类型");
         return vitals(db, action, metric, date, start, end, zone);
+    }
+
+    private static JSONObject dailySummary(HealthSource.Reader db, JSONObject request, long now, TimeZone zone) throws Exception {
+        boolean range = has(request, "start_date") || has(request, "end_date");
+        if ((range && has(request, "date")) || (range && (!has(request, "start_date") || !has(request, "end_date")))
+                || has(request, "start_time") || has(request, "end_time"))
+            throw new IllegalArgumentException("daily_summary 仅支持date或完整start_date/end_date，不支持时间段");
+        if (range) return rangeSummary(db, "daily_summary", request, now, zone);
+        LocalDate day = date(request.optString("date", ""), now, zone);
+        long start = day.atStartOfDay(zone.toZoneId()).toEpochSecond();
+        long end = day.plusDays(1).atStartOfDay(zone.toZoneId()).toEpochSecond();
+        long observedEnd = Math.min(end, now / 1000L + 1);
+        Metric heartMetric = Metric.of("heart_rate_summary");
+        List<long[]> heart = points(db, heartMetric.table, heartMetric.keys, heartMetric.field, start, observedEnd, heartMetric.min, heartMetric.max);
+        JSONObject out = new JSONObject().put("action", "daily_summary").put("date", day.toString()).put("timezone", zone.getID());
+        JSONObject sleep = start >= now / 1000L ? missing("sleep_summary", day.toString(), zone, "查询日期还没有开始")
+                : sleep(db, "sleep_summary", day.toString(), start, end, false, zone);
+        out.put("sleep", sleep);
+        boolean any = "ok".equals(sleep.optString("status"));
+        for (String name : new String[]{"heart_rate", "stress", "spo2"}) {
+            Metric metric = Metric.of(name + "_summary");
+            List<long[]> values = "heart_rate".equals(name) ? heart : points(db, metric.table, metric.keys, metric.field, start, observedEnd, metric.min, metric.max);
+            JSONObject summary = summarize(values, zone);
+            JSONObject item = new JSONObject().put("status", values.isEmpty() ? "missing" : "ok")
+                    .put("unit", metric.unit).put("summary", summary);
+            sampling(item, values, heart, day, now, zone);
+            out.put(name, item); any |= !values.isEmpty();
+        }
+        return out.put("status", any ? "ok" : "missing");
+    }
+
+    private static void sampling(JSONObject item, List<long[]> values, List<long[]> heart, LocalDate day, long now, TimeZone zone) throws Exception {
+        List<long[]> hours = new ArrayList<>();
+        List<Integer> positive = new ArrayList<>();
+        ZonedDateTime until = day.plusDays(1).atStartOfDay(zone.toZoneId());
+        for (ZonedDateTime hour = day.atStartOfDay(zone.toZoneId()); hour.isBefore(until); hour = hour.plusHours(1)) {
+            ZonedDateTime next = hour.plusHours(1);
+            if (next.isAfter(until) || next.toInstant().toEpochMilli() > now) break;
+            long start = hour.toEpochSecond(), end = next.toEpochSecond();
+            int count = count(values, start, end), heartCount = count(heart, start, end);
+            hours.add(new long[]{start, end, count, heartCount});
+            if (count > 0) positive.add(count);
+        }
+        JSONArray low = new JSONArray();
+        item.put("low_sampling_periods", low).put("comparison_hours", hours.size()).put("typical_hourly_count", JSONObject.NULL);
+        if (values.isEmpty()) { item.put("sampling_note", "当天没有可用数据，无法比较小时采样量，不推断原因"); return; }
+        if (positive.size() < 2) { item.put("sampling_note", "有有效点的完整小时不足2个，无法比较；当前未完成小时和未来小时不参与比较"); return; }
+        java.util.Collections.sort(positive);
+        int n = positive.size();
+        double typical = n % 2 == 1 ? positive.get(n/2) : (positive.get(n/2-1) + positive.get(n/2)) / 2.0;
+        item.put("typical_hourly_count", typical).put("sampling_note", "以当天至少2个有有效点的完整小时点数中位数为基准，少于一半标为相对数据较少；不等于无数据。当前未完成小时和未来小时不参与比较；原因仅为可能，不能据此确定佩戴或设备状态");
+        for (long[] h : hours) if (h[2] < typical / 2) {
+            String hint = h[3] > 0 ? "该时段有心率记录，可能处于省电模式中或手部动作较大，也可能与测量设置、传感器状态或同步延迟等有关，不能确定原因"
+                    : "该时段没有有效心率记录，可能未佩戴或佩戴不紧，也可能与设备电量、测量设置、传感器状态或同步延迟等有关，不能确定原因";
+            JSONObject previous = low.length() == 0 ? null : low.getJSONObject(low.length()-1);
+            if (previous != null && previous.getString("end").equals(iso(h[0], zone))
+                    && (previous.getLong("heart_rate_count") > 0) == (h[3] > 0)) {
+                previous.put("end", iso(h[1], zone)).put("count", previous.getLong("count") + h[2])
+                        .put("heart_rate_count", previous.getLong("heart_rate_count") + h[3]);
+            } else low.put(new JSONObject().put("start", iso(h[0], zone)).put("end", iso(h[1], zone))
+                    .put("count", h[2]).put("heart_rate_count", h[3]).put("hint", hint));
+        }
+    }
+
+    private static int count(List<long[]> values, long start, long end) {
+        int n = 0;
+        for (long[] p : values) if (p[0] >= start && p[0] < end) n++;
+        return n;
+    }
+
+    private static JSONObject summarize(List<long[]> values, TimeZone zone) throws Exception {
+        if (values.isEmpty()) return new JSONObject().put("count", 0).put("min", JSONObject.NULL).put("max", JSONObject.NULL)
+                .put("average", JSONObject.NULL).put("first", JSONObject.NULL).put("last", JSONObject.NULL);
+        long min = Long.MAX_VALUE, max = Long.MIN_VALUE, sum = 0;
+        for (long[] p : values) { min = Math.min(min, p[1]); max = Math.max(max, p[1]); sum += p[1]; }
+        return new JSONObject().put("count", values.size()).put("min", min).put("max", max)
+                .put("average", Math.round(sum * 10.0 / values.size()) / 10.0)
+                .put("first", iso(values.get(0)[0], zone)).put("last", iso(values.get(values.size()-1)[0], zone));
     }
 
     private static boolean has(JSONObject request, String key) {

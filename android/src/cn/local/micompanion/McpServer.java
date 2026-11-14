@@ -208,7 +208,7 @@ public final class McpServer {
     private static JSONArray tools() throws Exception {
         return new JSONArray().put(new JSONObject()
                 .put("name", "health")
-                .put("description", "查询小米运动健康的睡眠、心率、压力、血氧和运动数据；概括用 date 查一天或用 start_date/end_date 查范围，详细用 date + start_time/end_time 查时段")
+                .put("description", "daily_summary 统一每日总结：睡眠、心率、压力、血氧及有效测量点数、相比当天其他完整小时数据较少的时段与非确定原因提示；用 date 查一天或 start_date/end_date 逐天查最多31天。保留各项详细和运动查询")
                 .put("inputSchema", new JSONObject()
                         .put("type", "object")
                         .put("properties", new JSONObject()
@@ -253,13 +253,10 @@ public final class McpServer {
     }
 
     private enum Action {
-        SLEEP_SUMMARY("sleep_summary", "sleep_summary", "睡眠概括：用 date 查某一天，或用 start_date/end_date 按天返回；含入睡/醒来、总睡眠、各阶段时长、心率/血氧范围"),
+        DAILY_SUMMARY("daily_summary", "daily_summary", "每日总结：按日期返回睡眠、心率、压力、血氧及测量点数，比较当天完整小时的数据较少时段"),
         SLEEP_DETAIL("sleep_detail", "sleep_detail", "睡眠详细：每个阶段转折单独一段，含起止时间、阶段、心率/血氧及其时间范围；可用 start_time/end_time 限定当天时段"),
-        HEART_SUMMARY("heart_rate_summary", "heart_rate_summary", "心率概括：用 date 查某一天，或用 start_date/end_date 按天返回；含范围、平均值、采样数"),
         HEART_DETAIL("heart_rate_detail", "heart_rate_detail", "某一天心率明细：每 15 分钟的最小-最大范围"),
-        STRESS_SUMMARY("stress_summary", "stress_summary", "压力概括：用 date 查某一天，或用 start_date/end_date 按天返回；含范围、平均值、采样数"),
         STRESS_DETAIL("stress_detail", "stress_detail", "压力明细：每 15 分钟的最小-最大范围；可用 start_time/end_time 限定当天时段"),
-        SPO2_SUMMARY("spo2_summary", "spo2_summary", "血氧概括：用 date 查某一天，或用 start_date/end_date 按天返回；含范围、平均值、采样数"),
         SPO2_DETAIL("spo2_detail", "spo2_detail", "血氧明细：每 15 分钟的最小-最大范围；可用 start_time/end_time 限定当天时段"),
         EXERCISE_RECORDS("exercise_records", "exercise_records", "查询某个时间段的运动记录摘要，返回运动 ID、配速、步频、步幅、心率区段"),
         EXERCISE_DETAIL("exercise_detail", "exercise_detail", "按运动 ID 返回完整摘要、心率区段以及逐秒心率/步频/步幅/配速/距离/卡路里/步数");
@@ -305,15 +302,56 @@ public final class McpServer {
         private View() { }
         static String render(JSONObject data) {
             if (data == null) return "没有数据";
-            if (!"ok".equals(data.optString("status"))) return data.optString("date", data.optString("start_date", "")) + "：" + data.optString("reason", "没有数据");
             String action = data.optString("action", "");
+            if (!"ok".equals(data.optString("status")) && !("daily_summary".equals(action) && "missing".equals(data.optString("status"))))
+                return data.optString("date", data.optString("start_date", "")) + "：" + data.optString("reason", "没有数据");
             try {
                 JSONArray days = data.optJSONArray("days");
                 if (days != null) return days(data, days);
+                if ("daily_summary".equals(action)) return daily(data);
                 if (action.startsWith("sleep_")) return sleep(data, action.endsWith("detail"));
                 if (action.startsWith("exercise_")) return exercise(data, action.endsWith("detail"));
                 return vitals(data);
             } catch (Exception e) { return "数据格式不完整"; }
+        }
+
+        private static String daily(JSONObject data) throws Exception {
+            StringBuilder out = new StringBuilder(data.optString("date")).append(" 每日总结（")
+                    .append(data.optString("timezone")).append("）\n");
+            JSONObject sleepData = data.optJSONObject("sleep");
+            out.append(sleepData == null ? "睡眠：不可用" : render(sleepData)).append('\n');
+            String[] keys = {"heart_rate", "spo2", "stress"};
+            String[] labels = {"心率", "血氧", "压力"};
+            for (int i = 0; i < keys.length; i++) {
+                JSONObject metric = data.optJSONObject(keys[i]);
+                out.append(labels[i]).append('：');
+                if (metric == null) { out.append("不可用\n"); continue; }
+                JSONObject summary = metric.optJSONObject("summary");
+                int count = summary == null ? 0 : summary.optInt("count");
+                if (count > 0) {
+                    out.append("范围 ").append(value(summary, "min")).append('-').append(value(summary, "max"))
+                            .append("；平均 ").append(value(summary, "average")).append(' ').append(metric.optString("unit")).append("；");
+                } else out.append("没有可用测量数据；");
+                out.append("测量点 ").append(count).append(" 个\n");
+                out.append(metric.optString("sampling_note")).append('\n');
+                JSONArray periods = metric.optJSONArray("low_sampling_periods");
+                if (periods != null && periods.length() > 0) out.append("数据较少时段：\n");
+                for (int j = 0; periods != null && j < periods.length(); j++) {
+                    JSONObject period = periods.getJSONObject(j);
+                    out.append(periodStamp(period.optString("start"))).append("～").append(periodStamp(period.optString("end")))
+                            .append("：测量点 ").append(period.optInt("count")).append(" 个；同期心率 ")
+                            .append(period.optInt("heart_rate_count")).append(" 个");
+                    String hint = period.optString("hint");
+                    if (!hint.isEmpty()) out.append("；").append(hint);
+                    out.append('\n');
+                }
+            }
+            return out.toString();
+        }
+
+        private static String periodStamp(String iso) {
+            try { return OffsetDateTime.parse(iso).format(DateTimeFormatter.ofPattern("MM-dd HH:mmxxx")); }
+            catch (Exception e) { return iso; }
         }
 
         private static String screen(JSONObject data) throws Exception {

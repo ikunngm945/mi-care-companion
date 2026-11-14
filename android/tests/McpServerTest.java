@@ -37,6 +37,7 @@ public final class McpServerTest {
         McpServer server = new McpServer(17992, "abcdefghijklmnop", request -> {
             String action = request.optString("action");
             if ("screen_usage".equals(action)) return screen;
+            if ("daily_summary".equals(action)) return dailyFixture(request);
             if (action.startsWith("sleep_")) return sleepFixture(request);
             return action.startsWith("exercise_") ? exercise : data;
         }, request -> new JSONObject().put("status", "ok").put("text", "天气（今天 2026-11-07）：\n现在：气温 16℃"));
@@ -57,6 +58,34 @@ public final class McpServerTest {
             check("weather".equals(tools.getJSONObject(1).getString("name")), "second tool is weather");
             check(tools.getJSONObject(1).getJSONObject("inputSchema").getJSONObject("properties").length() == 0,
                     "weather takes no arguments");
+            JSONArray actions = tools.getJSONObject(0).getJSONObject("inputSchema").getJSONObject("properties")
+                    .getJSONObject("action").getJSONArray("enum");
+            check(actions.length() == 7 && actions.toString().contains("daily_summary"), "one daily summary replaces four summaries");
+            for (String old : new String[]{"sleep_summary", "heart_rate_summary", "stress_summary", "spo2_summary"}) {
+                check(!actions.toString().contains("\"" + old + "\""), "old summary not advertised: " + old);
+                check(sleepCall(old, "2026-10-31").contains("未知 action"), "old summary rejected: " + old);
+            }
+            String daily = sleepCall("daily_summary", "2026-10-31");
+            check(daily.contains("每日总结") && daily.contains("心率") && daily.contains("血氧") && daily.contains("压力"), "daily combines all metrics");
+            check(daily.contains("测量点 12 个") && daily.contains("数据较少时段")
+                    && daily.contains("同期心率 3 个") && daily.contains("可能处于省电模式中"), "daily exposes relative sparse counts and qualified hint");
+            JSONObject emptyDaily = dailyFixture(new JSONObject().put("date", "2026-10-31"));
+            emptyDaily.put("status", "missing");
+            for (String metric : new String[]{"heart_rate", "stress", "spo2"})
+                emptyDaily.getJSONObject(metric).getJSONObject("summary").put("count", 0);
+            String emptyText = McpServer.View.render(emptyDaily);
+            check(emptyText.contains("每日总结") && emptyText.contains("测量点 0 个"), "missing day retains zero counts");
+            JSONObject emptyRange = new JSONObject().put("status", "missing").put("action", "daily_summary")
+                    .put("start_date", "2026-10-31").put("end_date", "2026-11-01")
+                    .put("days", new JSONArray().put(emptyDaily).put(new JSONObject(emptyDaily.toString()).put("date", "2026-11-01")));
+            check(McpServer.View.render(emptyRange).contains("2026-11-01 每日总结"), "empty range retains each day");
+            JSONObject dst = dailyFixture(new JSONObject().put("date", "2026-10-31"));
+            dst.getJSONObject("spo2").getJSONArray("low_sampling_periods").getJSONObject(0)
+                    .put("start", "2026-10-25T02:00:00+02:00").put("end", "2026-10-25T02:00:00+01:00");
+            check(McpServer.View.render(dst).contains("02:00+02:00～10-25 02:00+01:00"), "repeated DST hour retains offsets");
+            for (String metric : new String[]{"heart_rate", "stress", "spo2"})
+                emptyDaily.getJSONObject(metric).put("low_sampling_periods", new JSONArray()).put("sampling_note", "不足比较，不推断原因");
+            check(!McpServer.View.render(emptyDaily).contains("关机"), "insufficient data does not infer causes");
             String call = request("abcdefghijklmnop", "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"health\",\"arguments\":{\"action\":\"heart_rate_detail\",\"date\":\"2026-10-31\"}}}");
             check(call.contains("08:00-08:15"), "detail text");
             check(call.contains("82-98"), "range text");
@@ -68,7 +97,7 @@ public final class McpServerTest {
             check(weatherCall.contains("气温 16℃"), "weather facts");
             String noArgs = request("abcdefghijklmnop", "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"tools/call\",\"params\":{\"name\":\"weather\"}}");
             check(noArgs.contains("天气（今天 2026-11-07）"), "weather works without arguments");
-            String napSummary = sleepCall("sleep_summary", "2026-10-31");
+            String napSummary = sleepCall("daily_summary", "2026-10-31");
             check(napSummary.contains("25分钟") && napSummary.contains("分期不可用"),
                     "unstaged nap keeps native duration and explains missing stages");
             check(!napSummary.contains("清醒 0分钟") && !napSummary.contains("浅睡 0分钟"),
@@ -79,14 +108,15 @@ public final class McpServerTest {
                     "detail retains unstaged nap interval and duration");
             check(!napDetail.contains("没有睡眠段") && !napDetail.contains("睡眠段 1"),
                     "unstaged nap is visible without inventing a stage");
-            String clippedSummary = sleepCall("sleep_summary", "2026-10-31", "13:30");
+            String clippedSummary = McpServer.View.render(sleepFixture(new JSONObject().put("action", "sleep_summary")
+                    .put("date", "2026-10-31").put("start_time", "13:30")));
             String clippedDetail = sleepCall("sleep_detail", "2026-10-31", "13:30");
             check(clippedSummary.contains("共不可用") && clippedDetail.contains("共不可用")
                             && clippedDetail.contains("合计：总睡眠 不可用"),
                     "unknown clipped nap duration stays unavailable in sessions and totals");
             check(!clippedSummary.contains("共0分钟") && !clippedDetail.contains("总睡眠 0分钟"),
                     "unknown sleep duration is not zero");
-            String mixedSummary = sleepCall("sleep_summary", "2026-11-01");
+            String mixedSummary = sleepCall("daily_summary", "2026-11-01");
             String mixedDetail = sleepCall("sleep_detail", "2026-11-01");
             check(mixedSummary.contains("10-31 23:00") && mixedSummary.contains("11-01 06:10"),
                     "cross-night summary shows dates on both interval endpoints");
@@ -110,6 +140,22 @@ public final class McpServerTest {
             check(zero.contains("亮屏时长：0秒") && zero.contains("\"isError\":false"), "observed zero remains valid data");
             System.out.println("McpServerTest OK");
         } finally { server.stop(); }
+    }
+
+    private static JSONObject dailyFixture(JSONObject request) throws Exception {
+        JSONObject out = new JSONObject().put("status", "ok").put("action", "daily_summary")
+                .put("date", request.getString("date")).put("timezone", "Asia/Shanghai")
+                .put("sleep", sleepFixture(new JSONObject(request.toString()).put("action", "sleep_summary")));
+        for (String metric : new String[]{"heart_rate", "stress", "spo2"}) {
+            out.put(metric, new JSONObject().put("status", "ok").put("unit", "spo2".equals(metric) ? "%" : "")
+                    .put("summary", new JSONObject().put("min", 60).put("max", 90).put("average", 75).put("count", 12))
+                    .put("sampling_note", "与当天其他完整小时相比")
+                    .put("low_sampling_periods", new JSONArray().put(new JSONObject()
+                            .put("start", "2026-10-31T08:00:00+08:00").put("end", "2026-10-31T09:00:00+08:00")
+                            .put("count", 1).put("heart_rate_count", 3)
+                            .put("hint", "可能处于省电模式中，或手部动作较大"))));
+        }
+        return out;
     }
 
     private static JSONObject sleepFixture(JSONObject request) throws Exception {
