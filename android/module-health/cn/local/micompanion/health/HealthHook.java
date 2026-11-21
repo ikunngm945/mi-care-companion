@@ -64,6 +64,9 @@ public final class HealthHook implements IXposedHookLoadPackage {
                         requestDatabase();
                         return new JSONObject().put("status", "ok").put("action", "sync_database");
                     }
+                    if ("stress_writeback".equals(query.optString("action")) || "health_writeback".equals(query.optString("action"))) {
+                        return StressWriteback.authorized(app, importer, query, () -> requestDatabase(false));
+                    }
                     if ("band_key".equals(query.optString("action"))) return readBandKey(app);
                     if ("band_import".equals(query.optString("action"))
                             || "band_import_status".equals(query.optString("action"))
@@ -143,37 +146,42 @@ public final class HealthHook implements IXposedHookLoadPackage {
         }, 5, java.util.concurrent.TimeUnit.SECONDS);
     }
 
-    private static void requestDatabase() {
+    private static void requestDatabase() { requestDatabase(true); }
+
+    private static void requestDatabase(boolean full) {
         worker.execute(() -> {
             databaseSent = false;
-            fitnessSent = false;
-            publishDatabase();
-            publish();
+            if (full) fitnessSent = false;
+            publishDatabase(full);
+            if (full) publish();
         });
     }
 
-    private static void publishDatabase() {
+    private static void publishDatabase(boolean full) {
         if (databaseBusy) return;
         Context context = target;
         LinkClient link = client;
         if (context == null || link == null || !link.status().connected) return;
         File source;
+        String scope;
         try {
-            File dir = importer == null ? null : importer.accountDirectory();
-            source = dir == null ? null : new File(dir, "fitness_data");
+            if (importer == null) return;
+            File dir = importer.accountDirectory();
+            source = new File(dir, "fitness_data");
+            scope = BandFileImporter.scope(dir);
         } catch (Throwable ignored) { return; }
-        if (source == null || !source.isFile()) return;
+        if (!source.isFile()) return;
         databaseBusy = true;
         File copy = new File(context.getCacheDir(), "fitness_data.sync");
         File zip = new File(context.getCacheDir(), "fitness.sync.zip");
         try {
             if (!databaseSent) {
                 copy.delete();
-                copyDatabase(source, copy);
+                copyDatabase(source, copy, scope);
                 if (!sendFile(link, "fitness_data", copy)) return;
                 databaseSent = true;
             }
-            if (!fitnessSent) {
+            if (full && !fitnessSent) {
                 zip.delete();
                 File fitness = new File(context.getFilesDir(), "fitness");
                 if (fitness.isDirectory()) {
@@ -242,15 +250,27 @@ public final class HealthHook implements IXposedHookLoadPackage {
         }
     }
 
-    private static void copyDatabase(File source, File target) throws Exception {
-        SQLiteDatabase database = HealthSource.open(source);
-        try {
-            target.delete();
+    private static void copyDatabase(File source, File target, String scope) throws Exception {
+        try (SQLiteDatabase database = HealthSource.open(source)) {
             database.execSQL("VACUUM INTO '" + target.getAbsolutePath().replace("'", "''") + "'");
-        } finally {
-            database.close();
         }
         if (!target.isFile() || target.length() == 0) throw new IllegalStateException("数据库快照为空");
+        // Tag only the temporary copy. DELETE journal mode puts the committed tag in the exact file we hash/send.
+        try (SQLiteDatabase copy = SQLiteDatabase.openDatabase(target.getAbsolutePath(), null,
+                SQLiteDatabase.OPEN_READWRITE | SQLiteDatabase.NO_LOCALIZED_COLLATORS);
+             android.database.Cursor journal = copy.rawQuery("PRAGMA journal_mode=DELETE", null)) {
+            if (!journal.moveToFirst() || !"delete".equalsIgnoreCase(journal.getString(0))) {
+                throw new IllegalStateException("不能保证健康快照元数据与文件原子绑定");
+            }
+            copy.beginTransaction();
+            try {
+                copy.execSQL("CREATE TABLE micompanion_detail_scope (id INTEGER PRIMARY KEY CHECK(id=1),scope TEXT NOT NULL)");
+                copy.execSQL("INSERT INTO micompanion_detail_scope VALUES (1,?)", new Object[]{scope});
+                copy.setTransactionSuccessful();
+            } finally {
+                copy.endTransaction();
+            }
+        }
     }
 
     private static String sha256(File file) throws Exception {

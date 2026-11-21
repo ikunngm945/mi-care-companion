@@ -17,6 +17,7 @@ import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.Locale;
 import java.util.UUID;
@@ -46,6 +47,8 @@ final class BandSppClient {
         void onReady();
         void onFileIds(int subtype, List<byte[]> fileIds);
         void onFile(byte[] file);
+        default void onStorage(long[] reading) { }
+        default void onBattery(Integer percent) { }
         void onError(String reason);
     }
 
@@ -75,10 +78,17 @@ final class BandSppClient {
     private byte[] watchNonce;
     private byte[] decryptionKey, encryptionKey, decryptionNonce, encryptionNonce;
 
+    private final boolean statusOnly;
+
     BandSppClient(Context context, BandConfig config, Listener listener) {
+        this(context, config, listener, false);
+    }
+
+    BandSppClient(Context context, BandConfig config, Listener listener, boolean statusOnly) {
         this.context = context.getApplicationContext();
         this.config = config;
         this.listener = listener;
+        this.statusOnly = statusOnly;
     }
 
     void connect() {
@@ -224,7 +234,7 @@ final class BandSppClient {
             case V2_ACK:
                 break;
             case V2_NACK:
-                // We only have one outstanding command at a time; resending is unnecessary.
+                // This client does not retransmit; a missing reply is handled by the caller.
                 break;
             default:
                 break;
@@ -241,7 +251,7 @@ final class BandSppClient {
             body = BandCrypto.ctrCrypt(Cipher.DECRYPT_MODE, decryptionKey, body);
         }
         if (rawChannel == CHANNEL_PROTOBUF) handleCommand(body);
-        else if (rawChannel == CHANNEL_ACTIVITY) handleActivity(body);
+        else if (!statusOnly && rawChannel == CHANNEL_ACTIVITY) handleActivity(body);
     }
 
     private void startAuth() throws Exception {
@@ -255,15 +265,28 @@ final class BandSppClient {
     }
 
     private void handleCommand(byte[] command) throws Exception {
-        java.util.Map<Integer, Object> fields = BandProto.fields(command);
+        Map<Integer, Object> fields;
+        try {
+            fields = BandProto.fields(command);
+        } catch (IllegalArgumentException badCommand) {
+            if (statusOnly && ready) return; // An unreadable reply must not block the other query.
+            throw badCommand;
+        }
         int type = (int) BandProto.varint(fields, 1, -1);
         int subtype = (int) BandProto.varint(fields, 2, -1);
         long status = BandProto.varint(fields, 100, 0);
         byte[] account = BandProto.bytes(fields, 3);
         if (type == 1) {
             handleAuth(account, subtype, status);
-        } else if (type == 8) {
+        } else if (!statusOnly && type == 8) {
             handleHealth(fields, subtype, status);
+        } else if (statusOnly && ready && type == BandProto.CMD_TYPE_SYSTEM) {
+            boolean ok = status == 0 || status == 1;
+            if (subtype == BandProto.SYSTEM_STORAGE) {
+                listener.onStorage(ok ? BandProto.storageReading(fields) : null);
+            } else if (subtype == BandProto.SYSTEM_BATTERY) {
+                listener.onBattery(ok ? BandProto.batteryReading(fields) : null);
+            }
         }
     }
 
@@ -301,7 +324,10 @@ final class BandSppClient {
             ready = true;
             authPhase = 3;
             state("手环认证成功");
-            try { listener.onReady(); } catch (Throwable ignored) { }
+            if (statusOnly) {
+                sendCommand(BandProto.storageCommand());
+                if (!closed) sendCommand(BandProto.batteryCommand());
+            } else try { listener.onReady(); } catch (Throwable ignored) { }
         } else if (authPhase >= 1 && status != 0 && status != 1) {
             fail("手环认证失败（状态 " + status + "）");
         }

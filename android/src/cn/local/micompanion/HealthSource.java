@@ -24,7 +24,8 @@ public final class HealthSource {
    row.put("value",value).put("time",c.getLong(1));if(c.getColumnCount()>2)row.put("updateTime",c.getLong(2));
     if(c.getColumnCount()>3)row.put("endTime",c.getLong(3));
     if(c.getColumnCount()>4)row.put("sid",c.getString(4));
-    if(c.getColumnCount()>5)row.put("key",c.getString(5));rows.put(row);
+    if(c.getColumnCount()>5)row.put("key",c.getString(5));
+     if(c.getColumnCount()>6 && !c.isNull(6))row.put("writeback_original",c.getString(6));rows.put(row);
   }}return rows;
  };}
  public static File account(Context c){
@@ -58,7 +59,7 @@ public final class HealthSource {
    updated=Math.max(updated,value.optLong("source_updated_at_ms",0));updated=Math.max(updated,value.optLong("sample_time_epoch_seconds",0)*1000L);
   }
  }
- private static JSONObject value(JSONObject row)throws JSONException{
+ static JSONObject value(JSONObject row)throws JSONException{
   String text=row.getString("value");if(text.length()>MAX_INPUT)throw new JSONException("size");
   int depth=0;char quote=0;boolean escape=false;
   for(int i=0;i<text.length();i++){

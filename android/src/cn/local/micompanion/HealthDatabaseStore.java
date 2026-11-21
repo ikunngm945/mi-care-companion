@@ -1,6 +1,7 @@
 package cn.local.micompanion;
 
 import android.content.Context;
+import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -16,6 +17,8 @@ import org.json.JSONObject;
 /** Receives the health module's local fitness_data copy and serves MCP queries from it. */
 final class HealthDatabaseStore {
     private static final long MAX_BYTES = 256L * 1024 * 1024;
+    private static final long RECENT_PROGRESS_MS = 15_000L;
+    private static volatile long lastFitnessProgress = Long.MIN_VALUE;
     private static FileOutputStream stream;
     private static File temp;
     private static File target;
@@ -38,6 +41,17 @@ final class HealthDatabaseStore {
         return file(context).isFile();
     }
 
+    /** Recent chunks on the current connection; a leftover .part file is not evidence of a transfer. */
+    static boolean receivingFitnessData() {
+        LinkServer server = MonitorService.current();
+        if (server == null) return false;
+        LinkServer.Status health = server.status("health");
+        long progress = lastFitnessProgress;
+        // LinkServer also uses monotonic nanoTime milliseconds for connectedAt.
+        return health.connected && progress != Long.MIN_VALUE && progress >= health.connectedAt
+                && System.nanoTime() / 1_000_000L - progress <= RECENT_PROGRESS_MS;
+    }
+
     static void accept(Context context, JSONObject message) throws Exception {
         accept(directory(context), message);
     }
@@ -47,9 +61,10 @@ final class HealthDatabaseStore {
         if ("database_begin".equals(type)) {
             long length = message.optLong("length", -1);
             if (length <= 0 || length > MAX_BYTES) throw new IllegalArgumentException("数据库大小无效");
-            name = message.optString("name", "fitness_data");
-            if (!"fitness_data".equals(name) && !"fitness".equals(name)) throw new IllegalArgumentException("未知数据库类型");
+            String incoming = message.optString("name", "fitness_data");
+            if (!"fitness_data".equals(incoming) && !"fitness".equals(incoming)) throw new IllegalArgumentException("未知数据库类型");
             if (stream != null) abort();
+            name = incoming;
             if (!directory.isDirectory() && !directory.mkdirs()) throw new IllegalStateException("无法创建健康数据目录");
             target = new File(directory, "fitness".equals(name) ? "fitness.zip" : "fitness_data.db");
             temp = new File(directory, target.getName() + ".part");
@@ -58,6 +73,7 @@ final class HealthDatabaseStore {
             expected = length;
             written = 0;
             sha256 = message.optString("sha256", "");
+            if ("fitness_data".equals(name)) lastFitnessProgress = System.nanoTime() / 1_000_000L;
         } else if ("database_chunk".equals(type)) {
             if (stream == null) throw new IllegalStateException("数据库传输尚未开始");
             String data = message.optString("data", "");
@@ -65,6 +81,7 @@ final class HealthDatabaseStore {
             if (written + bytes.length > expected) throw new IllegalArgumentException("数据库内容超过声明大小");
             stream.write(bytes);
             written += bytes.length;
+            if (bytes.length != 0 && "fitness_data".equals(name)) lastFitnessProgress = System.nanoTime() / 1_000_000L;
         } else if ("database_end".equals(type)) {
             if (stream == null) throw new IllegalStateException("数据库传输尚未开始");
             stream.getFD().sync();
@@ -89,6 +106,7 @@ final class HealthDatabaseStore {
                 abort();
                 throw new IllegalStateException("无法保存数据库", failure);
             }
+            lastFitnessProgress = Long.MIN_VALUE;
             boolean packed = "fitness".equals(name);
             temp = null;
             target = null;
@@ -106,6 +124,7 @@ final class HealthDatabaseStore {
     }
 
     static synchronized void abort() {
+        lastFitnessProgress = Long.MIN_VALUE;
         if (stream != null) try { stream.close(); } catch (Exception ignored) { }
         stream = null;
         if (temp != null && temp.exists()) temp.delete();
@@ -179,6 +198,23 @@ final class HealthDatabaseStore {
         StringBuilder out = new StringBuilder(bytes.length * 2);
         for (byte b : bytes) out.append(String.format(java.util.Locale.US, "%02x", b));
         return out.toString();
+    }
+
+    static boolean hasTable(SQLiteDatabase database, String table) {
+        try (Cursor row = database.rawQuery("SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1",
+                new String[]{table})) {
+            return row.moveToFirst();
+        }
+    }
+
+    /** The scope is part of the same immutable synchronized file, never a separately timed preference. */
+    static String historyScope(SQLiteDatabase database) {
+        if (!hasTable(database, "micompanion_detail_scope")) return null;
+        try (Cursor row = database.rawQuery("SELECT scope FROM micompanion_detail_scope WHERE id=1", null)) {
+            if (!row.moveToFirst()) return null;
+            String scope = row.getString(0);
+            return scope != null && scope.matches("[0-9a-f]{64}") ? scope : null;
+        }
     }
 
     static JSONObject query(Context context, JSONObject request) throws Exception {

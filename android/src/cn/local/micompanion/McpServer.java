@@ -36,7 +36,8 @@ public final class McpServer {
     private final Gateway gateway;
     private final Gateway weatherGateway;
     private final AtomicBoolean running = new AtomicBoolean(false);
-    private volatile ServerSocket server;
+    private ServerSocket server;
+    private final java.util.Set<Socket> clients = new java.util.HashSet<>();
     private volatile ExecutorService workers;
     private volatile String error = "";
 
@@ -59,47 +60,58 @@ public final class McpServer {
         this.weatherGateway = weatherGateway;
     }
 
-    public boolean start() {
+    public synchronized boolean start() {
         if (running.get()) return true;
         try {
-            ServerSocket socket = new ServerSocket();
-            socket.setReuseAddress(true);
-            socket.bind(new InetSocketAddress(port), 8);
-            server = socket;
-            running.set(true);
+            server = new ServerSocket();
+            server.setReuseAddress(true);
+            server.bind(new InetSocketAddress(port), 8);
             workers = Executors.newCachedThreadPool(r -> daemon(r, "mi-companion-mcp"));
-            Thread accept = daemon(this::acceptLoop, "mi-companion-mcp-accept");
-            accept.start();
+            ServerSocket listener = server;
+            running.set(true);
+            daemon(() -> acceptLoop(listener), "mi-companion-mcp-accept").start();
             error = "";
             return true;
         } catch (Exception e) {
+            stop();
             error = "MCP 端口 " + port + " 无法监听";
             return false;
         }
     }
 
-    public void stop() {
+    public synchronized void stop() {
         running.set(false);
-        ServerSocket socket = server;
+        if (server != null) try { server.close(); } catch (IOException ignored) { }
         server = null;
-        if (socket != null) try { socket.close(); } catch (IOException ignored) { }
-        ExecutorService pool = workers;
+        for (Socket client : clients) close(client);
+        clients.clear();
+        if (workers != null) workers.shutdownNow();
         workers = null;
-        if (pool != null) pool.shutdownNow();
     }
 
     public String error() { return error; }
     public boolean isRunning() { return running.get(); }
 
-    private void acceptLoop() {
-        while (running.get()) {
+    private void acceptLoop(ServerSocket listener) {
+        while (!listener.isClosed()) {
             try {
-                Socket socket = server.accept();
-                ExecutorService pool = workers;
-                if (pool != null) pool.execute(() -> handle(socket));
-                else close(socket);
+                Socket socket = listener.accept();
+                synchronized (this) {
+                    if (server != listener) { close(socket); return; }
+                    clients.add(socket);
+                    workers.execute(() -> {
+                        try { handle(socket); }
+                        finally {
+                            close(socket);
+                            synchronized (this) { clients.remove(socket); }
+                        }
+                    });
+                }
             } catch (IOException e) {
-                if (running.get()) error = "MCP 连接失败";
+                synchronized (this) {
+                    if (server == listener) { stop(); error = "MCP 连接失败"; }
+                }
+                return;
             }
         }
     }
@@ -123,6 +135,7 @@ public final class McpServer {
             JSONObject message;
             try { message = new JSONObject(LinkProtocol.utf8(body)); }
             catch (Exception e) { respond(socket, 400, "", false); return; }
+            if (socket.isClosed()) return;
             JSONObject response = dispatch(message);
             if (response == null) { respond(socket, 202, "", false); return; }
             respond(socket, 200, response.toString(), true);

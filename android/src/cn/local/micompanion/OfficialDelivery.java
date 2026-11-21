@@ -27,6 +27,7 @@ final class OfficialDelivery {
             try { io.verifyTarget(); }
             catch(Exception changed){io.checkpoint("pending",null);throw changed;}
             try { text=io.generate(); }
+            catch (OfficialApi.Paused paused) { io.checkpoint("pending",null); throw paused; }
             catch (Exception failure) { io.checkpoint("generation_failed",null); return; }
             if (text==null || text.trim().isEmpty()) { io.checkpoint("generation_failed",null); return; }
             io.checkpoint("ready",text); // A storage failure must not fall through to IM.
@@ -38,6 +39,7 @@ final class OfficialDelivery {
         try { io.verifyTarget(); }
         catch(Exception changed){io.checkpoint("ready",text);throw changed;}
         try { io.send(text); }
+        catch (OfficialApi.Paused paused) { io.checkpoint("ready",text); throw paused; }
         catch (Exception failure) { io.checkpoint("delivery_unknown",text); return; }
         io.checkpoint("sent",null);
     }

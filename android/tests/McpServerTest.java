@@ -138,6 +138,14 @@ public final class McpServerTest {
             screen.put("status", "ok").put("fields", screenFields.put("screen_on_ms", 0).put("unlocked_use_ms", 0));
             String zero = request("abcdefghijklmnop", "{\"jsonrpc\":\"2.0\",\"id\":12,\"method\":\"tools/call\",\"params\":{\"name\":\"screen_usage\",\"arguments\":{}}}");
             check(zero.contains("亮屏时长：0秒") && zero.contains("\"isError\":false"), "observed zero remains valid data");
+            try (Socket held = new Socket("127.0.0.1", 17992)) {
+                held.setSoTimeout(1500);
+                server.stop();
+                try { check(held.getInputStream().read() == -1, "stop closes previously connected clients"); }
+                catch (java.net.SocketException reset) { /* TCP reset also means closed. */ }
+            }
+            check(!server.isRunning() && server.start(), "MCP can be re-enabled");
+            check(request("abcdefghijklmnop", "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}").startsWith("HTTP/1.1 200"), "listener usable after restart");
             System.out.println("McpServerTest OK");
         } finally { server.stop(); }
     }

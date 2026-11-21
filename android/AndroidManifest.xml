@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="cn.local.micompanion" android:versionCode="13" android:versionName="0.8.0">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="cn.local.micompanion" android:versionCode="18" android:versionName="0.8.6">
  <uses-sdk android:minSdkVersion="28" android:targetSdkVersion="36"/>
  <uses-permission android:name="android.permission.INTERNET"/>
  <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
@@ -16,11 +16,13 @@
  <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation"/>
  <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
  <uses-permission android:name="moe.shizuku.manager.permission.API_V23"/>
- <queries><package android:name="moe.shizuku.privileged.api"/><provider android:authorities="weather"/></queries>
+ <queries><package android:name="moe.shizuku.privileged.api"/><package android:name="com.mi.health"/><provider android:authorities="weather"/></queries>
  <application android:label="小米关怀助手" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:allowBackup="false" android:usesCleartextTraffic="true" android:supportsRtl="true" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher">
   <activity android:name=".MainActivity" android:exported="true" android:configChanges="orientation|screenSize">
    <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
   </activity>
+  <activity android:name=".HealthDetailActivity" android:exported="false" android:configChanges="orientation|screenSize" android:enableOnBackInvokedCallback="false"/>
+  <provider android:name=".StressWriteGate" android:authorities="cn.local.micompanion.stress-writeback" android:exported="false" android:grantUriPermissions="true"/>
   <service android:name=".MonitorService" android:exported="false" android:foregroundServiceType="specialUse">
    <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-enabled screen idle and unlocked-use monitoring plus loopback snapshot reception for personal wellbeing; ongoing notification and stop control"/>
   </service>

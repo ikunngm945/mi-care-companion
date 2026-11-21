@@ -4,15 +4,19 @@ import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
-/** Tiny proto2 codec for the subset of Xiaomi's command/auth messages used by direct BLE sync. */
+/** Tiny proto2 codec for the subset of Xiaomi's commands used by the direct band connection. */
 final class BandProto {
     private BandProto() { }
 
     static final int CMD_TYPE_AUTH = 1;
+    static final int CMD_TYPE_SYSTEM = 2;
     static final int CMD_TYPE_HEALTH = 8;
+    static final int SYSTEM_BATTERY = 1;
+    static final int SYSTEM_STORAGE = 62;
     static final int AUTH_SUBTYPE_DEVICE_NONCE = 26;
     static final int AUTH_SUBTYPE_CONFIRM = 27;
     static final int HEALTH_FETCH_TODAY = 1;
@@ -42,6 +46,38 @@ final class BandProto {
                 varintField(4, 224),
                 bytesField(5, reg)
         );
+    }
+
+    static byte[] batteryCommand() {
+        return command(CMD_TYPE_SYSTEM, SYSTEM_BATTERY, null);
+    }
+
+    /** Gadgetbridge's wear_system.proto: Command.system.power.battery.level. */
+    static Integer batteryReading(Map<Integer, Object> command) {
+        Map<Integer, Object> system = statusMessage(command, 4);
+        Map<Integer, Object> power = statusMessage(system, 2);
+        Map<Integer, Object> battery = statusMessage(power, 1);
+        long level = varint(battery, 1, -1);
+        return level >= 0 && level <= 100 ? (int) level : null;
+    }
+
+    static byte[] storageCommand() {
+        return command(CMD_TYPE_SYSTEM, SYSTEM_STORAGE, null);
+    }
+
+    /** Command.system.storageInfo: int64 used = 1, int64 total = 2. */
+    static long[] storageReading(Map<Integer, Object> command) {
+        Map<Integer, Object> values = statusMessage(statusMessage(command, 4), 44);
+        long used = varint(values, 1, -1), total = varint(values, 2, -1);
+        return used >= 0 && total > 0 && used <= total ? new long[]{used, total} : null;
+    }
+
+    private static Map<Integer, Object> statusMessage(Map<Integer, Object> parent, int field) {
+        byte[] body = bytes(parent, field);
+        if (body != null) {
+            try { return fields(body); } catch (IllegalArgumentException ignored) { }
+        }
+        return Collections.emptyMap();
     }
 
     static byte[] fetchTodayCommand() {

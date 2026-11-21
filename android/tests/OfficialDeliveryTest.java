@@ -35,6 +35,12 @@ public final class OfficialDeliveryTest {
             if(point<3){assert !changed.calls.contains("generate,"):"changed target generated at guard "+point;assert changed.stage.equals("pending");}
             else assert changed.stage.equals("ready"):"unattempted IM lost ready text";
         }
-        System.out.println("OfficialDelivery: 16 checks passed (durable barriers, no duplicate post, lost reply, expiry, legacy, changed target)");
+        IO generationPaused=new IO(){public String generate()throws Exception{throw new OfficialApi.Paused();}};
+        try{OfficialDelivery.run("pending",null,1,2,generationPaused);throw new AssertionError("expected pause");}catch(OfficialApi.Paused expected){}
+        assert generationPaused.stage.equals("pending")&&!generationPaused.calls.contains("send,");
+        IO deliveryPaused=new IO(){public void send(String value)throws Exception{throw new OfficialApi.Paused();}};
+        try{OfficialDelivery.run("ready","生成正文",1,2,deliveryPaused);throw new AssertionError("expected pause");}catch(OfficialApi.Paused expected){}
+        assert deliveryPaused.stage.equals("ready")&&deliveryPaused.text.equals("生成正文");
+        System.out.println("OfficialDelivery: 18 checks passed (durable barriers, no duplicate post, expiry, changed target, integration pause)");
     }
 }

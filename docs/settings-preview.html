@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<title>设置 · 小米关怀助手</title>
+<style>
+:root{color-scheme:light;--paper:#f2f5fc;--white:#fff;--ink:#162744;--muted:#52627c;--line:#e2e8f4;--blue:#2949ad;--tint:#edf1ff;--green:#16664d;--mint:#e4f6ee;--red:#a43748;--warm:#fff5e7;--radius:22px;font:15px/1.55 system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
+*,*::before,*::after{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink)}button,input,textarea{font:inherit}button,a,summary,input,textarea{-webkit-tap-highlight-color:transparent}button{cursor:pointer}a{color:inherit}p{margin:0}h1,h2{margin:0;line-height:1.2}button:focus-visible,a:focus-visible,summary:focus-visible,input:focus-visible,textarea:focus-visible{outline:3px solid #5172e7;outline-offset:3px}button:disabled{cursor:default;opacity:.55}.frame{width:min(100% - 32px,1064px);margin-inline:auto}.topbar{border-bottom:1px solid var(--line);background:#fafdff}.top-inner{min-height:64px;display:flex;justify-content:space-between;align-items:center;gap:10px}.brand{display:flex;align-items:center;gap:10px;font-weight:750}.mark{display:grid;place-items:center;width:36px;height:36px;border-radius:12px;background:var(--tint);color:var(--blue)}.icon{width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}.preview{font-size:.76rem;white-space:nowrap;border:1px solid var(--line);border-radius:999px;padding:4px 9px;color:var(--muted);background:var(--white)}main{padding-block:21px 20px}.hero{position:relative;overflow:hidden;background:#172d61;color:#fff;border-radius:26px;padding:22px;isolation:isolate}.hero::after{content:"";position:absolute;z-index:-1;width:282px;height:282px;border-radius:50%;top:-140px;right:-48px;border:1px solid #ffffff32;box-shadow:0 0 0 23px #ffffff0d,0 0 0 50px #ffffff0a;pointer-events:none}.hero-head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start}.kicker{font-size:.77rem;font-weight:650;letter-spacing:.14em;color:#d4dfff}.hero h1{font-size:clamp(2rem,4vw,3rem);letter-spacing:.02em;margin-top:4px}.hero p{color:#e5edff;margin-top:6px;font-size:.9rem}.hero .badge.good{background:#e1f8eb;color:#11583f}.overview{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin-top:16px}.overview a{min-width:0;display:grid;align-content:center;gap:1px;min-height:56px;padding:7px 8px;border-radius:12px;border:1px solid #ffffff33;background:#ffffff12;text-decoration:none}.overview a:hover{background:#ffffff25}.overview span{font-size:.73rem;color:#dde6ff}.overview strong{font-size:.84rem;font-weight:780;overflow-wrap:anywhere}.jump{display:flex;flex-wrap:wrap;gap:3px 6px;padding:12px 0 10px}.jump a{display:grid;place-items:center;min-height:40px;padding:0 10px;border-radius:10px;text-decoration:none;color:var(--blue);font-size:.85rem;font-weight:680}.jump a:hover,.jump a:active{background:var(--tint)}.grid{display:grid;gap:14px}.column{display:grid;align-content:start;gap:14px}.card{background:var(--white);border:1px solid var(--line);box-shadow:0 2px 10px #21365f06;border-radius:var(--radius);padding:16px;min-width:0;scroll-margin-top:12px}.card-head{display:flex;align-items:center;gap:11px;margin-bottom:12px}.card-icon{width:42px;height:42px;border-radius:14px;display:grid;place-items:center;background:var(--tint);color:var(--blue);flex:none}.card-icon.mint{background:var(--mint);color:var(--green)}.card-icon.warm{background:var(--warm);color:#86501a}.card-icon.violet{background:#f2edff;color:#6139a5}.card-head h2{font-size:1.13rem}.card-head p{font-size:.82rem;color:var(--muted);margin-top:3px}.card-head .badge{margin-left:auto}.badge{display:inline-flex;align-items:center;gap:5px;border-radius:999px;font-size:.75rem;font-weight:730;padding:4px 9px;white-space:nowrap;background:#eef1f7;color:var(--muted)}.badge.good{background:var(--mint);color:var(--green)}.badge .dot{width:6px;height:6px;border-radius:50%;background:currentColor}.rows{margin:0}.row{min-height:46px;display:flex;gap:10px;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--line)}.row:first-child{border-top:0}.row dt,.row strong{font-weight:660}.row dd{margin:0;text-align:right;color:var(--muted);font-size:.86rem}.row small{display:block;color:var(--muted);font-size:.8rem;font-weight:400}.small,.foot{color:var(--muted);font-size:.82rem}.callout{background:#f5f7ff;border-radius:12px;padding:9px 11px;color:#415674;font-size:.83rem;margin-block:8px}.callout.warning{color:#794819;background:var(--warm)}details{border-top:1px solid var(--line);margin-top:8px}details[open]{padding-bottom:3px}summary{display:flex;align-items:center;justify-content:space-between;list-style:none;cursor:pointer;min-height:46px;color:var(--blue);font-size:.89rem;font-weight:700;gap:8px}summary::-webkit-details-marker{display:none}summary::after{content:"";width:7px;height:7px;border-bottom:2px solid currentColor;border-right:2px solid currentColor;transform:rotate(45deg);margin:0 5px 4px}details[open]>summary::after{transform:rotate(225deg);margin-top:7px}.fields{display:grid;gap:10px;margin-bottom:10px}.field{display:grid;min-width:0;gap:4px;font-size:.85rem;font-weight:660}.field input,.field textarea{min-width:0;width:100%;padding:9px 10px;color:var(--ink);border:1px solid #d5def0;border-radius:10px;background:#fafbff;font-weight:400}.field input{height:44px}.field textarea{resize:vertical;min-height:100px}.field input::placeholder,.field textarea::placeholder{color:#63728c}.token{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:end}.btns{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}.btn{border:1px solid transparent;min-height:44px;padding:8px 13px;border-radius:11px;background:var(--tint);color:var(--blue);font-weight:700;font-size:.86rem}.btn:hover{background:#dfe7ff}.btn.primary{background:var(--blue);color:#fff}.btn.primary:hover{background:#1e3785}.btn.outline{background:var(--white);border-color:#d4def3}.btn.outline:hover{background:#f5f7ff}.btn.danger{background:#fcecf0;color:var(--red)}.btn.danger:hover{background:#fbdee5}.switch{appearance:none;width:44px;height:25px;flex:none;border-radius:20px;background:#73839c;padding:3px;cursor:pointer;margin:0}.switch::after{content:"";display:block;width:19px;height:19px;border-radius:50%;background:#fff;transition:transform .15s}.switch:checked{background:var(--blue)}.switch:checked::after{transform:translateX(19px)}.checkrow{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:.85rem;min-height:44px}.checkrow input{accent-color:var(--blue);width:18px;height:18px;flex:none}.perms{display:grid;grid-template-columns:1fr 1fr;gap:6px}.perm{min-height:44px;text-align:left}.permission-state{display:block;font-size:.74rem;color:var(--muted);font-weight:520}.mono{font-family:ui-monospace,monospace;overflow-wrap:anywhere}.closing{padding:16px 2px 6px;text-align:center}.toast{position:fixed;z-index:3;bottom:max(12px,env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);width:max-content;max-width:calc(100% - 24px);padding:10px 14px;border-radius:12px;background:#1a2d53;color:#fff;box-shadow:0 8px 25px #172b5844;font-size:.9rem}.toast:empty{display:none}dialog{border:1px solid var(--line);border-radius:19px;background:var(--white);color:var(--ink);padding:19px;width:min(400px,calc(100% - 30px));box-shadow:0 15px 60px #172b583d}dialog::backdrop{background:#101d386a}dialog h2{font-size:1.18rem}dialog p{margin-top:7px;color:var(--muted)}dialog .btns{justify-content:flex-end}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
+@media(min-width:820px){main{padding-top:28px}.hero{padding:26px}.overview{max-width:675px;gap:10px}.overview a{padding-inline:13px}.grid{grid-template-columns:1fr 1fr;gap:16px}.column{gap:16px}.card{padding:19px}.jump{padding-block:13px}.jump a{padding-inline:14px}}
+@media(max-width:370px){.frame{width:calc(100% - 22px)}.card{padding:13px}.hero{padding:15px}.overview a{padding-inline:6px}.jump a{padding-inline:7px}.card-head{gap:8px}.card-icon{width:36px;height:36px}.card-head p{font-size:.77rem}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important}}
+</style>
+</head>
+<body>
+<svg width="0" height="0" aria-hidden="true" style="position:absolute" xmlns="http://www.w3.org/2000/svg"><defs>
+<symbol id="heart" viewBox="0 0 24 24"><path d="M20.8 8.6c0 4.2-8.8 9.8-8.8 9.8S3.2 12.8 3.2 8.6a4.6 4.6 0 0 1 8.8-1.9 4.6 4.6 0 0 1 8.8 1.9Z"/><path d="M7.6 11.7h2.2l1-2.2 1.7 4.5 1.2-2.3h2.7"/></symbol>
+<symbol id="link" viewBox="0 0 24 24"><path d="m9 15 6-6m-2.5-2.5 2-2a4.25 4.25 0 0 1 6 6l-2 2m-7 5-2 2a4.25 4.25 0 0 1-6-6l2-2"/></symbol>
+<symbol id="icon-sync" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5m-3.8-4a7.3 7.3 0 0 1 11.9-2L20 12M4 12l2.9 6a7.3 7.3 0 0 0 11.9-2"/></symbol>
+<symbol id="bot" viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="13" rx="4"/><path d="M12 7V3m-2 0h4M2 13h2m16 0h2M9 13h.01m5.99 0h.01M9 16h6"/></symbol>
+<symbol id="send" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4 20-7ZM11 13 22 2"/></symbol>
+<symbol id="shield" viewBox="0 0 24 24"><path d="M12 22s7-3.5 7-10V5l-7-3-7 3v7c0 6.5 7 10 7 10Z"/><path d="m9 12 2 2 4-4"/></symbol>
+<symbol id="pulse" viewBox="0 0 24 24"><path d="M3 12h4l3-6 4 12 3-6h4"/><rect x="2" y="3" width="20" height="18" rx="4"/></symbol>
+</defs></svg>
+<header class="topbar"><div class="frame top-inner"><div class="brand"><span class="mark"><svg class="icon" aria-hidden="true"><use href="#heart"/></svg></span>小米关怀助手</div><span class="preview">HTML 原型 · 示例数据</span></div></header>
+<main class="frame">
+ <div class="hero"><div class="hero-head"><div><div class="kicker">小米关怀助手</div><h1>设置</h1><p>管理数据连接、关怀消息和后台监控</p></div><span class="badge good" data-service><span class="dot"></span><span>服务运行中</span></span></div>
+ <div class="overview" aria-label="状态概览"><a href="#connection"><span>模块连接</span><strong id="overview-link">2 / 2 已连接</strong></a><a href="#sync"><span>健康副本</span><strong id="overview-copy">刚刚同步</strong></a><a href="#monitor"><span>自动监控</span><strong id="overview-monitor">已启用</strong></a></div></div>
+ <nav class="jump" aria-label="设置板块"><a href="#connection">数据连接</a><a href="#sync">健康同步</a><a href="#monitor">监控与权限</a><a href="#astrbot">AstrBot</a><a href="#tasks">消息任务</a><a href="#mcp">MCP</a><a href="#diagnostics">本机诊断</a></nav>
+ <div class="grid">
+  <div class="column">
+   <section class="card" id="connection" aria-labelledby="connection-title">
+    <div class="card-head"><span class="card-icon"><svg class="icon" aria-hidden="true"><use href="#link"/></svg></span><div><h2 id="connection-title">数据连接</h2><p>管理天气和运动健康模块</p></div></div>
+    <dl class="rows"><div class="row"><dt>健康模块</dt><dd><span class="badge good" data-module><span class="dot"></span><span>已连接</span></span></dd></div><div class="row"><dt>天气模块</dt><dd><span class="badge good" data-module><span class="dot"></span><span>已连接</span></span></dd></div></dl>
+    <details id="link-settings"><summary>端口与 Token</summary>
+     <div class="fields"><label class="field" for="port">WebSocket 端口<input id="port" type="number" inputmode="numeric" min="1" max="65535" value="17890"></label><div class="token"><label class="field" for="token">模块 Token<input id="token" type="password" value="DEMO-PLACEHOLDER" readonly autocomplete="off"></label><button type="button" class="btn outline" id="show-token" aria-pressed="false">显示</button></div></div>
+     <p class="small">助手与两个模块的端口、Token 要一致。更换 Token 后，两个模块都要重填。</p>
+     <div class="btns"><button type="button" class="btn primary" id="save-link">保存并重载服务</button><button type="button" class="btn" id="copy-token">复制示例 Token</button><button type="button" class="btn outline" id="reset-token">重新生成</button></div>
+    </details>
+   </section>
+   <section class="card" id="sync" aria-labelledby="sync-title">
+    <div class="card-head"><span class="card-icon mint"><svg class="icon" aria-hidden="true"><use href="#icon-sync"/></svg></span><div><h2 id="sync-title">健康同步</h2><p>查看同步状态，手动刷新副本</p></div></div>
+    <dl class="rows"><div class="row"><dt>本机健康副本</dt><dd id="copy-status">刚刚同步</dd></div><div class="row"><dt>手环自动同步</dt><dd>上次成功 · 6 分钟前</dd></div></dl>
+    <div class="btns"><button type="button" class="btn primary" id="sync-now">同步数据库与请求</button></div>
+    <details><summary>了解数据同步</summary><p class="small">手动同步刷新本机健康副本，不会自动把明细编辑写回。来自手环直连的原始文件有独立的补同步流程。明细里的保存和恢复仍由你主动操作。</p></details>
+   </section>
+   <section class="card" id="monitor" aria-labelledby="monitor-title">
+    <div class="card-head"><span class="card-icon warm"><svg class="icon" aria-hidden="true"><use href="#shield"/></svg></span><div><h2 id="monitor-title">监控与权限</h2><p>后台服务、自动监控与系统授权</p></div></div>
+    <div class="row"><div><strong id="monitor-label">自动监控</strong><small>关闭监控不影响数据连接</small></div><input class="switch" type="checkbox" role="switch" id="monitor-switch" aria-labelledby="monitor-label" checked></div>
+    <div class="row"><div><strong>后台服务</strong><small>停止服务也会停止自动监控</small></div><button type="button" class="btn outline" id="service-action">停止服务</button></div>
+    <details><summary>系统权限</summary><div class="perms"><button type="button" class="btn outline perm" data-demo="通知权限">通知权限<span class="permission-state">已允许</span></button><button type="button" class="btn outline perm" data-demo="使用情况访问">使用情况访问<span class="permission-state">已允许</span></button><button type="button" class="btn outline perm" data-demo="电池后台运行">电池后台运行<span class="permission-state">查看系统设置</span></button><button type="button" class="btn outline perm" data-demo="HyperOS 自启动">HyperOS 自启动<span class="permission-state">需手动确认</span></button></div></details>
+    <details><summary>Root / Shizuku 与模块拉起</summary><label class="checkrow"><input type="checkbox">优先使用 Shizuku 拉起</label><div class="btns"><button type="button" class="btn outline" data-demo="检查 Root 状态">检查 Root</button><button type="button" class="btn outline" data-demo="授权或检查 Shizuku">检查 Shizuku</button><button type="button" class="btn outline" data-demo="拉起天气与健康应用">拉起天气和健康</button></div><p class="callout">LSPosed 中分别启用两个模块，并各自只勾选对应应用。</p></details>
+   </section>
+  </div>
+  <div class="column">
+   <section class="card" id="astrbot" aria-labelledby="astrbot-title">
+    <div class="card-head"><span class="card-icon violet"><svg class="icon" aria-hidden="true"><use href="#bot"/></svg></span><div><h2 id="astrbot-title">AstrBot</h2><p>配置关怀消息的服务与接收目标</p></div><span class="badge" id="api-state" role="status">未检查</span></div>
+    <label class="row" for="astrbot-switch"><span><strong id="astrbot-label">启用 AstrBot</strong><small id="astrbot-help">关闭后暂停自动关怀、测试发送和重试，保留配置。</small></span><input class="switch" type="checkbox" role="switch" id="astrbot-switch" aria-labelledby="astrbot-label" aria-describedby="astrbot-help" checked></label>
+    <div class="fields"><label class="field" for="api-url">官方 API 地址<input id="api-url" type="url" spellcheck="false" autocomplete="off" placeholder="https://示例地址/api/v1"></label><label class="field" for="api-key">官方 API Key<input id="api-key" type="password" autocomplete="off" disabled aria-describedby="key-help" placeholder="原型不接收真实密钥"><span class="small" id="key-help">正式版需 chat、im、config 权限；非模型密钥。</span></label><label class="field" for="umo">目标 UMO<input id="umo" type="text" spellcheck="false" autocomplete="off" placeholder="在 AstrBot 中输入 /sid 获取"></label></div>
+    <details><summary>提示词、自动路由与传输选项</summary><div class="fields"><label class="field" for="prompt">关怀提示词<textarea id="prompt" rows="3" maxlength="4000" placeholder="留空使用默认提示词"></textarea></label></div><button type="button" class="btn outline" id="default-prompt">恢复默认提示词</button><p class="callout">自动路由按 UMO 匹配服务端配置与人格，不在手机上选模型。</p><label class="checkrow"><input type="checkbox" id="http">允许明文 HTTP</label><p class="small">明文 HTTP 会暴露密钥和健康数据，仅在明确了解风险时开启。</p></details>
+    <div class="btns"><button type="button" class="btn primary" id="save-api">保存配置</button><button type="button" class="btn outline" id="check-api">保存并检查 API</button></div><p class="small" style="margin-top:7px">检查不会调用 AI 或发送消息。</p>
+   </section>
+   <section class="card" id="tasks" aria-labelledby="tasks-title">
+    <div class="card-head"><span class="card-icon"><svg class="icon" aria-hidden="true"><use href="#send"/></svg></span><div><h2 id="tasks-title">消息任务</h2><p>测试发送、查询状态与处理历史</p></div></div>
+    <dl class="rows"><div class="row"><dt>最近任务</dt><dd id="task-state">暂无任务</dd></div></dl>
+    <p class="callout warning">正式版的测试发送会提交真实摘要，先生成关怀文本，再尝试发送。结果未知的任务不会重发。</p>
+    <div class="btns"><button type="button" class="btn primary" id="test-send">测试发送</button><button type="button" class="btn outline" id="retry-task" data-demo="查看或重试最近任务">查看 / 重试</button></div>
+    <details><summary>本机事件历史</summary><p class="small">删除本机历史不能撤回已发送的消息。</p><div class="btns"><button type="button" class="btn danger" id="clear-tasks">删除本机事件历史</button></div></details>
+   </section>
+   <section class="card" id="mcp" aria-labelledby="mcp-title">
+    <div class="card-head"><span class="card-icon"><svg class="icon" aria-hidden="true"><use href="#link"/></svg></span><div><h2 id="mcp-title">MCP</h2><p>管理 MCP 客户端的数据访问</p></div><span class="badge" id="mcp-state" role="status">已关闭</span></div>
+    <label class="row" for="mcp-switch"><span><strong id="mcp-label">启用 MCP 服务</strong><small id="mcp-help">关闭后，MCP 客户端不能再查询数据，不影响模块同步或 AstrBot。</small></span><input class="switch" type="checkbox" role="switch" id="mcp-switch" aria-labelledby="mcp-label" aria-describedby="mcp-help"></label>
+    <details><summary>连接地址与认证</summary><dl class="rows"><div class="row"><dt>本机地址</dt><dd class="mono">http://127.0.0.1:17891/mcp</dd></div></dl><p class="small">服务启用且后台服务运行时才可连接。局域网访问需替换为手机局域网 IP，认证 Token 与模块连接相同。</p></details>
+   </section>
+   <section class="card" id="diagnostics" aria-labelledby="diag-title">
+    <div class="card-head"><span class="card-icon mint"><svg class="icon" aria-hidden="true"><use href="#pulse"/></svg></span><div><h2 id="diag-title">本机诊断</h2><p>仅检查本机，不上传数据</p></div></div>
+    <div class="btns"><button type="button" class="btn outline" id="refresh-diag">刷新本机诊断</button></div>
+    <details id="diag-details"><summary>查看诊断详情</summary><dl class="rows"><div class="row"><dt>诊断状态</dt><dd id="diag-status">未刷新</dd></div></dl></details>
+   </section>
+  </div>
+ </div>
+ <p class="foot closing">仅预览设置页 · 示例状态不代表设备实况 · 不连接设备或服务</p>
+</main>
+<dialog id="confirm" aria-labelledby="confirm-title" aria-describedby="confirm-text"><h2 id="confirm-title"></h2><p id="confirm-text"></p><div class="btns"><button type="button" class="btn outline" id="cancel" autofocus>取消</button><button type="button" class="btn primary" id="confirm-action">确认</button></div></dialog>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const toast = $('toast'); let timer;
+const say = text => { clearTimeout(timer); toast.textContent = text; timer = setTimeout(() => { toast.textContent = ''; }, 3400); };
+const on = (id, fn) => $(id).addEventListener('click', fn);
+const text = (id, value) => { $(id).textContent = value; };
+const demo = action => say('原型演示：' + action + '，未执行实际操作');
+const modal = $('confirm'); let proposed = null;
+function confirmAction(title, description, label, then, danger = false) {
+  text('confirm-title', title); text('confirm-text', description); text('confirm-action', label);
+  $('confirm-action').className = 'btn ' + (danger ? 'danger' : 'primary');
+  proposed = then; modal.showModal();
+}
+on('cancel', () => modal.close());
+on('confirm-action', () => { const then = proposed; modal.close(); if (then) then(); });
+modal.addEventListener('close', () => { proposed = null; });
+document.querySelectorAll('[data-demo]').forEach(button => button.addEventListener('click', () => demo(button.dataset.demo)));
+let service = true, modules = true;
+const monitor = $('monitor-switch'), sync = $('sync-now');
+const astrbot = $('astrbot-switch'), mcp = $('mcp-switch');
+let apiChecked = false;
+function renderIntegrations() {
+  text('api-state', !astrbot.checked ? '已关闭' : apiChecked ? '已检查 · 演示' : '已启用');
+  $('api-state').classList.toggle('good', astrbot.checked);
+  for (const id of ['check-api', 'test-send', 'retry-task']) $(id).disabled = !astrbot.checked;
+  text('mcp-state', !mcp.checked ? '已关闭' : service ? '已启用' : '等待后台服务');
+  $('mcp-state').classList.toggle('good', mcp.checked && service);
+}
+astrbot.addEventListener('change', () => {
+  renderIntegrations(); demo((astrbot.checked ? '启用' : '关闭') + ' AstrBot');
+});
+mcp.addEventListener('change', () => {
+  renderIntegrations(); demo((mcp.checked ? '启用' : '关闭') + ' MCP');
+});
+function renderStatus() {
+  const serviceEl = document.querySelector('[data-service]');
+  serviceEl.classList.toggle('good', service); serviceEl.lastElementChild.textContent = service ? '服务运行中' : '服务已停止';
+  document.querySelectorAll('[data-module]').forEach(el => { el.classList.toggle('good', modules); el.lastElementChild.textContent = modules ? '已连接' : '未连接'; });
+  text('overview-link', modules ? '2 / 2 已连接' : '0 / 2 已连接');
+  text('overview-monitor', monitor.checked ? '已启用' : '已停用');
+  text('service-action', service ? '停止服务' : '启动服务'); sync.disabled = !modules;
+  renderIntegrations();
+}
+monitor.addEventListener('change', () => {
+  if (monitor.checked && !service) { service = true; modules = true; }
+  renderStatus(); demo(monitor.checked ? '启用自动监控' : '停止自动监控');
+});
+on('service-action', () => {
+  if (!service) { service = modules = true; renderStatus(); demo('启动服务'); return; }
+  confirmAction('停止后台服务？', '停止后不再接收模块数据，自动监控也会停止。', '停止服务', () => {
+    service = modules = monitor.checked = false; renderStatus(); demo('停止后台服务');
+  }, true);
+});
+on('show-token', () => {
+  const shown = $('token').type === 'password'; $('token').type = shown ? 'text' : 'password';
+  text('show-token', shown ? '隐藏' : '显示'); $('show-token').setAttribute('aria-pressed', String(shown));
+});
+on('copy-token', async () => {
+  try { await navigator.clipboard.writeText($('token').value); say('已复制示例 Token'); }
+  catch { $('token').type = 'text'; text('show-token', '隐藏'); $('show-token').setAttribute('aria-pressed', 'true'); $('token').focus(); $('token').select(); say('浏览器未允许自动复制，可手动复制示例 Token'); }
+});
+let tokenVersion = 0;
+on('reset-token', () => confirmAction('重新生成 Token？', '正式版的现有连接会断开，需要在两个模块里填入新 Token。', '生成示例 Token', () => {
+  tokenVersion += 1; $('token').value = 'DEMO-' + String(tokenVersion).padStart(11, '0'); modules = false; renderStatus(); demo('重新生成 Token');
+}));
+on('save-link', () => {
+  const port = $('port'); if (!port.value || !port.checkValidity()) { say('请输入 1 到 65535 之间的整数端口'); port.focus(); return; }
+  demo('保存端口并重载服务');
+});
+on('sync-now', () => {
+  text('copy-status', '刚刚同步 · 演示'); text('overview-copy', '刚刚同步'); demo('刷新本机健康副本');
+});
+on('default-prompt', () => { $('prompt').value = ''; say('示例草稿已恢复默认提示词'); });
+on('save-api', () => demo('保存配置'));
+on('check-api', () => { apiChecked = true; renderIntegrations(); demo('检查官方 API，不发送消息'); });
+on('test-send', () => confirmAction('预览测试发送？', '这里只演示交互，不会读取或提交健康数据，也不会发送消息。', '演示发送', () => {
+  text('task-state', '已演示 · 未实际发送'); demo('测试发送');
+}));
+on('clear-tasks', () => confirmAction('删除本机事件历史？', '这里只清除页面里的示例状态，不会删除手机上的记录。', '清除示例', () => { text('task-state', '暂无任务'); demo('清除示例历史'); }, true));
+on('refresh-diag', () => { $('diag-details').open = true; text('diag-status', '已刷新 · 演示'); demo('刷新诊断'); });
+renderStatus();
+</script>
+</body>
+</html>

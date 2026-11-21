@@ -46,24 +46,27 @@ public final class EventClient {
         SettingsStore.Config cfg = SettingsStore.load(c); cfg.validate(); return cfg;
     }
     public static void submit(Context c, boolean manual) {
-        if (!manual) { submitAutomatic(c, UUID.randomUUID().toString()); return; }
+        long ticket = IntegrationSettings.astrbotTicket(c);
+        if (ticket < 0) { status(c, "AstrBot 已关闭"); return; }
+        if (!manual) { submitAutomatic(c, UUID.randomUUID().toString(), ticket); return; }
         synchronized (LOCK) {
-            try { createAndSend(c, true, UUID.randomUUID().toString()); }
+            try { createAndSend(c, true, UUID.randomUUID().toString(), ticket); }
             catch (Exception e) { status(c, safeError(e)); }
         }
     }
-    /** Returns only after the immutable event is safely queued. Throws on local persistence failure. */
-    public static void submitAutomatic(Context c, String eventId) {
+    /** True only if the immutable event was queued; false when paused before queuing. */
+    static boolean submitAutomatic(Context c, String eventId, long ticket) {
         synchronized (LOCK) {
-            try { UUID.fromString(eventId); createAndSend(c, false, eventId); }
+            try { UUID.fromString(eventId); return createAndSend(c, false, eventId, ticket); }
             catch (Exception e) { status(c, safeError(e)); throw new IllegalStateException("自动事件尚未安全入队", e); }
         }
     }
-    private static void createAndSend(Context c, boolean manual, String id) throws Exception {
+    private static boolean createAndSend(Context c, boolean manual, String id, long ticket) throws Exception {
+        if (!IntegrationSettings.permitsAstrbot(c, ticket)) return false;
         SettingsStore.Config cfg = config(c);
         try (SQLiteDatabase db = database(c)) {
             try (Cursor existing = db.rawQuery("SELECT id FROM events WHERE id=?", new String[]{id})) {
-                if (existing.moveToFirst()) { process(c, db, cfg, id, false); return; }
+                if (existing.moveToFirst()) { process(c, db, cfg, id, false, ticket); return true; }
             }
             long now = System.currentTimeMillis();
             // Never silently delete an undelivered event, including an expired one.
@@ -120,9 +123,11 @@ public final class EventClient {
             values.put("id", id); values.put("created", created); values.put("base", cfg.baseUrl);
             values.put("umo", cfg.umo); values.put("payload", snapshot); values.put("stage", "pending");
             values.put("prompt", cfg.prompt);
+            if (!IntegrationSettings.permitsAstrbot(c, ticket)) return false;
             db.insertOrThrow("events", null, values);
             status(c, id + "\n已保存固定快照，正在连接 AstrBot…");
-            process(c, db, cfg, id, true);
+            process(c, db, cfg, id, true, ticket);
+            return true;
         }
     }
     private static boolean usable(JSONObject category) {
@@ -237,15 +242,17 @@ public final class EventClient {
         return value;
     }
     /** Periodic automatic retry; stopping monitoring stops this path, but never blocks a manual test. */
-    public static void retry(Context c) {
+    static void retry(Context c, long ticket) {
         if (!c.getSharedPreferences("monitor", 0).getBoolean("enabled", false)) return;
         synchronized (LOCK) {
+            if (!IntegrationSettings.permitsAstrbot(c, ticket)) return;
             try (SQLiteDatabase db = database(c)) {
                 SettingsStore.Config cfg = config(c);
                 try (Cursor rows = db.rawQuery("SELECT id FROM events WHERE stage IN ('pending','generating','ready','sending','retry') AND next_at<=? ORDER BY created LIMIT 5", new String[]{Long.toString(System.currentTimeMillis())})) {
                     while (rows.moveToNext()) {
                         if (!c.getSharedPreferences("monitor", 0).getBoolean("enabled", false)) break;
-                        process(c, db, cfg, rows.getString(0), false);
+                        if (!IntegrationSettings.permitsAstrbot(c, ticket)) break;
+                        process(c, db, cfg, rows.getString(0), false, ticket);
                     }
                 }
             } catch (Exception e) { status(c, safeError(e)); }
@@ -253,11 +260,13 @@ public final class EventClient {
     }
     /** User explicitly requests retry/status; this does not create or modify the original snapshot. */
     public static void retryLatest(Context c) {
+        long ticket = IntegrationSettings.astrbotTicket(c);
         synchronized (LOCK) {
+            if (!IntegrationSettings.permitsAstrbot(c, ticket)) return;
             try (SQLiteDatabase db = database(c)) {
                 SettingsStore.Config cfg = config(c);
                 try (Cursor row = db.rawQuery("SELECT id FROM events ORDER BY created DESC LIMIT 1", null)) {
-                    if (row.moveToFirst()) process(c, db, cfg, row.getString(0), true);
+                    if (row.moveToFirst()) process(c, db, cfg, row.getString(0), true, ticket);
                     else status(c, "没有可查询或重试的事件");
                 }
             } catch (Exception e) { status(c, safeError(e)); }
@@ -271,13 +280,17 @@ public final class EventClient {
     }
     public static String check(Context c) {
         // A read-only preflight must not queue behind a model call or create an event.
+        long ticket = IntegrationSettings.astrbotTicket(c);
+        if (ticket < 0) return "AstrBot 已关闭";
         try {
-            OfficialApi.Selection selected=OfficialApi.check(config(c));
+            OfficialApi.Selection selected=OfficialApi.check(config(c), "permission-check", () -> IntegrationSettings.permitsAstrbot(c, ticket));
             return "官方接口检查通过：chat / im / config 权限有效，目标机器人已配置\n自动匹配配置档："+selected.profileName+"\n配置 ID："+selected.configId+"\n生成将沿用该配置档的人格/模型/工具设置（未调用模型、未发送消息；不证明机器人在线）";
         }
         catch (Exception e) { return safeError(e); }
     }
-    private static void process(Context c, SQLiteDatabase db, SettingsStore.Config cfg, String id, boolean explicit) {
+    private static void process(Context c, SQLiteDatabase db, SettingsStore.Config cfg, String id, boolean explicit, long ticket) {
+        java.util.function.BooleanSupplier allowed = () -> IntegrationSettings.permitsAstrbot(c, ticket);
+        if (!allowed.getAsBoolean()) return;
         String stage,payload,base,umo,generated,prompt,profile; int attempts; long created;
         try (Cursor row = db.rawQuery("SELECT stage,payload,attempts,created,base,umo,generated,prompt,config_id FROM events WHERE id=?",new String[]{id})) {
             if (!row.moveToFirst()) return;
@@ -299,6 +312,7 @@ public final class EventClient {
             OfficialDelivery.run(stage,generated,created,System.currentTimeMillis(),new OfficialDelivery.Steps() {
                 private OfficialApi.Selection selected;
                 public void verifyTarget()throws Exception{
+                    OfficialApi.requireAllowed(allowed);
                     if(snapshot!=null&&"long_idle".equals(new JSONObject(snapshot).getJSONObject("trigger").getString("type"))
                             &&!c.getSharedPreferences("monitor",0).getBoolean("enabled",false))
                         throw new IllegalArgumentException("自动监控已停止，原任务暂停，尚未执行下一次生成或发送");
@@ -309,7 +323,7 @@ public final class EventClient {
                 }
                 public long now(){return System.currentTimeMillis();}
                 public void check()throws Exception{
-                    selected=OfficialApi.check(taskConfig,id);
+                    selected=OfficialApi.check(taskConfig,id,allowed);
                     if(storedProfile!=null&&!storedProfile.equals(selected.configId))
                         throw new java.io.IOException("目标配置路由已变化，旧任务暂停；不切换人格重用旧正文");
                     ContentValues values=new ContentValues();values.put("config_id",selected.configId);values.put("profile_name",selected.profileName);
@@ -317,9 +331,9 @@ public final class EventClient {
                 }
                 public String generate()throws Exception{
                     if(snapshot==null)throw new IllegalArgumentException("原快照不存在，未请求模型");
-                    return OfficialApi.generate(taskConfig,id,snapshot,selected);
+                    return OfficialApi.generate(taskConfig,id,snapshot,selected,allowed);
                 }
-                public void send(String text)throws Exception{OfficialApi.send(cfg,text);}
+                public void send(String text)throws Exception{OfficialApi.send(cfg,text,allowed);}
                 public void checkpoint(String next,String text)throws Exception{
                     ContentValues values=new ContentValues();values.put("stage",next);values.put("detail",explain(next));
                     if(text==null)values.putNull("generated");else values.put("generated",text);
@@ -332,6 +346,8 @@ public final class EventClient {
             try(Cursor row=db.rawQuery("SELECT stage FROM events WHERE id=?",new String[]{id})){
                 if(row.moveToFirst())status(c,id+"\n"+explain(row.getString(0)));
             }
+        }catch(OfficialApi.Paused e){
+            return; // Keep the last durable stage; disabling the integration is not a failed attempt.
         }catch(Exception e){
             // Only preflight is retryable. Never overwrite durable generating/sending/ready barriers.
             String current=stage;
@@ -356,6 +372,7 @@ public final class EventClient {
         return "已保存固定快照，等待官方接口检查；检查失败可重试（尚未请求模型/发送）";
     }
     private static String safeError(Exception e) {
+        if(e instanceof OfficialApi.Paused)return "AstrBot 已关闭或设置已更改，操作暂停";
         if(e instanceof OfficialApi.HttpFailure)return "AstrBot 官方接口 HTTP "+((OfficialApi.HttpFailure)e).code+"；请检查地址、API Key 的 chat / im / config 权限及机器人配置";
         if(e instanceof IllegalArgumentException)return "配置/协议错误："+e.getMessage();
         return "操作失败："+e.getClass().getSimpleName()+"（未记录密钥或响应正文；请检查网络/配置）";

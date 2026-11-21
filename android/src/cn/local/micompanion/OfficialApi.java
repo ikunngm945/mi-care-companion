@@ -3,6 +3,7 @@ package cn.local.micompanion;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.json.JSONTokener;
+import java.util.function.BooleanSupplier;
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.FilterInputStream;
@@ -40,8 +41,15 @@ public final class OfficialApi {
     public static Selection check(SettingsStore.Config cfg) throws Exception {
         return check(cfg, "permission-check");
     }
+    static final class Paused extends IOException { }
+    static void requireAllowed(BooleanSupplier allowed) throws Paused {
+        if (!allowed.getAsBoolean()) throw new Paused();
+    }
     public static Selection check(SettingsStore.Config cfg, String eventId) throws Exception {
-        JSONObject bots = jsonRequest(cfg, "GET", "/im/bots", null);
+        return check(cfg, eventId, () -> true);
+    }
+    static Selection check(SettingsStore.Config cfg, String eventId, BooleanSupplier allowed) throws Exception {
+        JSONObject bots = jsonRequest(cfg, "GET", "/im/bots", null, allowed);
         try {
             JSONArray ids = bots.getJSONObject("data").getJSONArray("bot_ids");
             String platform = cfg.umo.split(":", 2)[0];
@@ -53,7 +61,7 @@ public final class OfficialApi {
             }
             if (!found) throw new IOException("目标 UMO 的平台未在 AstrBot 配置中找到，请检查平台配置和 UMO");
         } catch (org.json.JSONException e) { throw invalid(); }
-        JSONObject sessions = jsonRequest(cfg, "GET", "/chat/sessions?username=mi-companion&page=1&page_size=1&platform_id=webchat", null);
+        JSONObject sessions = jsonRequest(cfg, "GET", "/chat/sessions?username=mi-companion&page=1&page_size=1&platform_id=webchat", null, allowed);
         try {
             JSONObject data = sessions.getJSONObject("data");
             JSONArray list = data.getJSONArray("sessions");
@@ -66,9 +74,9 @@ public final class OfficialApi {
                         || !(session.get("platform_id") instanceof String)) throw invalid();
             }
         } catch (org.json.JSONException e) { throw invalid(); }
-        String routes=request(cfg,"GET","/config-routes",null,false);
+        String routes=request(cfg,"GET","/config-routes",null,false,allowed);
         String selected=RouteResolver.resolve(routes,cfg.umo);
-        JSONObject profiles=jsonRequest(cfg,"GET","/config-profiles",null);
+        JSONObject profiles=jsonRequest(cfg,"GET","/config-profiles",null,allowed);
         String name=null;
         try {
             JSONArray list=profiles.getJSONObject("data").getJSONArray("info_list");
@@ -90,6 +98,9 @@ public final class OfficialApi {
         return generate(cfg,eventId,snapshot,check(cfg,eventId));
     }
     public static String generate(SettingsStore.Config cfg, String eventId, String snapshot, Selection selected) throws Exception {
+        return generate(cfg, eventId, snapshot, selected, () -> true);
+    }
+    static String generate(SettingsStore.Config cfg, String eventId, String snapshot, Selection selected, BooleanSupplier allowed) throws Exception {
         if (eventId == null || eventId.trim().isEmpty() || eventId.length() > 128
                 || snapshot == null || snapshot.getBytes(StandardCharsets.UTF_8).length > MAX_RAW)
             throw new IOException("生成请求数据无效或超限");
@@ -98,24 +109,28 @@ public final class OfficialApi {
         JSONObject body = new JSONObject().put("username", USER).put("session_id", USER + "-" + eventId)
                 .put("message", AdvicePrompt.message(cfg.prompt,HealthText.snapshot(WeatherText.compactSnapshot(snapshot)))).put("enable_streaming", true).put("flags", flags)
                 .put("config_id",selected.configId);
-        return AdvicePrompt.limit(request(cfg, "POST", "/chat", body, true));
+        return AdvicePrompt.limit(request(cfg, "POST", "/chat", body, true, allowed));
     }
 
     /** A successful adapter return is not a delivery/read receipt. The caller owns uncertain-send state. */
     public static void send(SettingsStore.Config cfg, String text) throws Exception {
+        send(cfg, text, () -> true);
+    }
+    static void send(SettingsStore.Config cfg, String text, BooleanSupplier allowed) throws Exception {
         boundedText(text);
-        jsonRequest(cfg, "POST", "/im/messages", new JSONObject().put("umo", cfg.umo).put("message", text));
+        jsonRequest(cfg, "POST", "/im/messages", new JSONObject().put("umo", cfg.umo).put("message", text), allowed);
     }
 
-    private static JSONObject jsonRequest(SettingsStore.Config cfg, String method, String suffix, JSONObject body) throws Exception {
-        String response = request(cfg, method, suffix, body, false);
+    private static JSONObject jsonRequest(SettingsStore.Config cfg, String method, String suffix, JSONObject body, BooleanSupplier allowed) throws Exception {
+        String response = request(cfg, method, suffix, body, false, allowed);
         JSONObject envelope = object(response);
         if (!"ok".equals(envelope.opt("status"))) throw new IOException("AstrBot 官方接口返回业务失败");
         if (!envelope.has("data")) throw invalid();
         return envelope;
     }
 
-    private static String request(SettingsStore.Config cfg, String method, String suffix, JSONObject body, boolean sse) throws Exception {
+    private static String request(SettingsStore.Config cfg, String method, String suffix, JSONObject body, boolean sse, BooleanSupplier allowed) throws Exception {
+        requireAllowed(allowed);
         cfg.validate();
         String base = ClientProtocol.baseUrl(cfg.baseUrl, cfg.allowHttp);
         final HttpURLConnection connection = (HttpURLConnection)new URL(base + suffix).openConnection();
@@ -136,8 +151,9 @@ public final class OfficialApi {
                 connection.setDoOutput(true);
                 connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
                 connection.setFixedLengthStreamingMode(payload.length);
+                requireAllowed(allowed);
                 try (OutputStream out = connection.getOutputStream()) { out.write(payload); }
-            }
+            } else requireAllowed(allowed);
             int status = connection.getResponseCode();
             if (status < 200 || status >= 300) throw new HttpFailure(status);
             timeLeft(deadline);
@@ -154,7 +170,7 @@ public final class OfficialApi {
                 return StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
                         .onUnmappableCharacter(CodingErrorAction.REPORT).decode(java.nio.ByteBuffer.wrap(out.toByteArray())).toString();
             }
-        } catch (HttpFailure e) { throw e; }
+        } catch (HttpFailure | Paused e) { throw e; }
         catch (Exception e) {
             // Only our fixed diagnostics may leave this trust boundary, never URL/headers/body/cause.
             if (e instanceof SafeFailure) throw e;

@@ -79,6 +79,7 @@ public final class MainActivityUiProbe extends Instrumentation {
                 require(activity != null, "shell launch did not report an Activity");
                 markStage("after_start_activity_sync");
                 awaitIdle("launch");
+                testMainTabs();
                 markStage("before_icon");
                 testInstalledIcon();
                 markStage("before_report_geometry");
@@ -133,17 +134,58 @@ public final class MainActivityUiProbe extends Instrumentation {
     private void finishOnce(int code, Bundle result) {
         if (finished.compareAndSet(false, true)) finish(code, result);
     }
+    private void testMainTabs() {
+        onUi(() -> {
+            View root = activity.findViewById(android.R.id.content);
+            require(visibleText(root, "今日健康概览") != null, "launch did not show the health overview");
+            require(visibleText(root, "天气") == null && visibleText(root, "屏幕使用") == null,
+                    "weather or screen usage appeared on Home");
+            for (String label : new String[]{"睡眠时长", "平均心率", "平均血氧", "平均压力"}) {
+                java.util.ArrayList<View> hits = new java.util.ArrayList<>();
+                root.findViewsWithText(hits, "查看" + label + "明细", View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);
+                require(hits.size() == 1 && hits.get(0).isClickable(), "health card does not expose a detail entry");
+            }
+            TextView home = visibleText(root, "首页"), devices = visibleText(root, "设备"), settings = visibleText(root, "设置");
+            require(home != null && devices != null && settings != null && home.isSelected(), "bottom navigation is missing");
+            require(devices.performClick() && devices.isSelected(), "device tab did not become selected");
+            require(visibleText(root, "手环电量") != null && visibleText(root, "手环存储") != null
+                    && visibleText(root, "未读取") != null, "device tab did not show an honest empty reading");
+            require(settings.performClick() && settings.isSelected(), "settings tab did not become selected");
+            EditText prompt = field("prompt", EditText.class);
+            String old = prompt.getText().toString();
+            try {
+                prompt.setText("仅测试草稿");
+                require(home.performClick() && home.isSelected(), "home tab did not become selected again");
+                require(settings.performClick() && "仅测试草稿".contentEquals(prompt.getText()), "switching tabs discarded the draft");
+            } finally { prompt.setText(old); }
+        });
+    }
+    private static TextView visibleText(View view, String text) {
+        if (view.getVisibility() != View.VISIBLE) return null;
+        if (view instanceof TextView && text.contentEquals(((TextView) view).getText())) return (TextView) view;
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                TextView found = visibleText(group.getChildAt(i), text);
+                if (found != null) return found;
+            }
+        }
+        return null;
+    }
     private void testInstalledIcon() throws Exception {
         android.graphics.drawable.Drawable icon=getTargetContext().getApplicationInfo().loadIcon(getTargetContext().getPackageManager());
         require(icon instanceof android.graphics.drawable.AdaptiveIconDrawable,"launcher icon is not adaptive");
         android.graphics.Bitmap rendered=android.graphics.Bitmap.createBitmap(512,512,android.graphics.Bitmap.Config.ARGB_8888);
         icon.setBounds(0,0,512,512);icon.draw(new android.graphics.Canvas(rendered));
         try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(getTargetContext().getCacheDir(),"icon-installed-preview.png"))){rendered.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}
-        android.content.res.Resources resources=getTargetContext().getResources();
-        int id=resources.getIdentifier("ic_companion_art","drawable",getTargetContext().getPackageName());
-        android.graphics.Bitmap art=android.graphics.BitmapFactory.decodeResource(resources,id);
-        require(art!=null&&art.getWidth()==512&&art.getHeight()==512,"approved icon artwork missing");
-        require(android.graphics.Color.red(art.getPixel(256,175))>200,"approved sun artwork missing");
+        int mint = 0, gold = 0, teal = 0;
+        for (int y = 0; y < rendered.getHeight(); y += 4) for (int x = 0; x < rendered.getWidth(); x += 4) {
+            int color = rendered.getPixel(x, y);
+            if (color == 0xfff2fffa) mint++;
+            if (color == 0xffffd166) gold++;
+            if (color == 0xff087669) teal++;
+        }
+        require(mint > 100 && gold > 30 && teal > 1000, "installed icon is missing its heart, sun, or teal background");
     }
     private void testReportNearCheckAndSecureWindow() {
         onUi(() -> {

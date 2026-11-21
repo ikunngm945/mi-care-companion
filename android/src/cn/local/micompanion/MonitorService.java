@@ -35,6 +35,15 @@ public final class MonitorService extends Service {
  private boolean uploading;
  public static LinkServer current(){return link;}
  public static boolean serviceRunning(){return serviceRunning;}
+ public static boolean mcpRunning(){McpServer current=mcp;return current!=null&&current.isRunning();}
+ // Both setters run on the main thread, as do service lifecycle callbacks.
+ static void refreshMcp(){MonitorService active=instance;if(active!=null)active.reconcileMcp();}
+ static void refreshAstrbot(){
+  MonitorService active=instance;
+  if(active==null)return;
+  active.state=new TriggerState();active.offStart=-1;active.lastRetry=-1;
+  active.scheduleSample();
+ }
  public static String status(Context c){
   SharedPreferences settings=c.getSharedPreferences("monitor",0);String error=settings.getString("error","");
   String linkError=settings.getString("link_error","");
@@ -87,6 +96,17 @@ public final class MonitorService extends Service {
    if(link.status("weather").connected)p.edit().putBoolean("seen_weather",true).apply();
    if(link.status("health").connected)p.edit().putBoolean("seen_health",true).apply();
   }
+  boolean monitoring=p.getBoolean("enabled",false);
+  if(!monitoring||!IntegrationSettings.astrbotEnabled(this)){
+   wasOn=active;offStart=-1;
+   if(state.offSinceMillis()>=0||state.isArmed())state=new TriggerState();
+   String paused=monitoring?"自动监控已启用 · AstrBot 已关闭，关怀消息暂停":"自动监控未启用";
+   if(p.contains("boot")||!paused.equals(p.getString("status","")))
+    p.edit().putString("state",state.encode()).remove("boot").remove("last_elapsed").remove("last_wall")
+      .putString("status",paused).apply();
+   return;
+  }
+  if(!active&&offStart<0)offStart=now;
   if(active!=wasOn){
    if(active){
     if(offStart>=0)p.edit().putLong("off_duration_ms",now-offStart).putLong("off_ended_wall",System.currentTimeMillis()).apply();
@@ -120,15 +140,23 @@ public final class MonitorService extends Service {
      .putString("status","待建自动事件已过期，未发送；新一轮仍须重新满足时间条件").commit();
    }
    if(!uploading&&!expired&&PendingAutomatic.retryDue(lastRetry,now)) {
+   long ticket=IntegrationSettings.astrbotTicket(this);
    uploading=true;lastRetry=now;final String id=p.getString("pending_auto","");
    net.execute(()->{
-    try{if(p.getBoolean("enabled",false)){if(!id.isEmpty()){EventClient.submitAutomatic(this,id);clearPending(p.edit()).commit();}EventClient.retry(this);}}
+    try{if(p.getBoolean("enabled",false)&&IntegrationSettings.permitsAstrbot(this,ticket)){
+     if(!id.isEmpty()&&EventClient.submitAutomatic(this,id,ticket))clearPending(p.edit()).commit();
+     EventClient.retry(this,ticket);
+    }}
     catch(Exception ex){p.edit().putString("error","队列保存失败："+ex.getClass().getSimpleName()).apply();}
     finally{h.post(()->uploading=false);}
    });
   }
  }
- private final Runnable tick=new Runnable(){public void run(){if(p.getBoolean("enabled",false)){sample();h.postDelayed(this,2000);}}};
+ private void scheduleSample(){h.removeCallbacks(tick);h.post(tick);}
+ private final Runnable tick=new Runnable(){public void run(){
+  sample();
+  if(p.getBoolean("enabled",false)&&IntegrationSettings.astrbotEnabled(MonitorService.this))h.postDelayed(this,2000);
+ }};
  private final BroadcastReceiver screen=new BroadcastReceiver(){public void onReceive(Context c,Intent i){sample();}};
  private void updateNotification(){
   Notification.Builder n=new Notification.Builder(this,"monitor")
@@ -145,7 +173,7 @@ public final class MonitorService extends Service {
   return p.getBoolean("enabled",false)?"监控中 · 数据接收中":"数据接收中（自动监控未启用）";
  }
  private void startLink(){
-  if(mcp!=null){mcp.stop();mcp=null;}
+  stopMcp();
   if(link!=null)link.stop();
   link=null;
   try{
@@ -154,15 +182,28 @@ public final class MonitorService extends Service {
    server.setDatabaseSink((kind,message)->HealthDatabaseStore.accept(this,message));
    if(server.start()){
     link=server;p.edit().remove("link_error").apply();
-    McpServer service=new McpServer(cfg.token,this::queryHealth,this::queryWeather);
-    if(service.start()){mcp=service;p.edit().remove("mcp_error").apply();}
-    else p.edit().putString("mcp_error",service.error()).apply();
    }
    else p.edit().putString("link_error",server.error()).apply();
   }catch(Exception ex){
    p.edit().putString("link_error","本机配置读取失败："+ex.getClass().getSimpleName()).apply();
   }
+  reconcileMcp();
   updateNotification();
+ }
+ private void stopMcp(){
+  McpServer old=mcp;mcp=null;if(old!=null)old.stop();
+ }
+ private void reconcileMcp(){
+  if(!IntegrationSettings.mcpEnabled(this)||!p.getBoolean("service_enabled",false)){
+   stopMcp();p.edit().remove("mcp_error").apply();return;
+  }
+  if(mcpRunning())return;
+  if(link==null){p.edit().putString("mcp_error","数据连接未就绪").apply();return;}
+  try{
+   McpServer server=new McpServer(SettingsStore.ensureLink(this).token,this::queryHealth,this::queryWeather);
+   if(server.start()){mcp=server;p.edit().remove("mcp_error").apply();}
+   else p.edit().putString("mcp_error",server.error()).apply();
+  }catch(Exception ex){p.edit().putString("mcp_error","本机配置读取失败").apply();}
  }
  private org.json.JSONObject queryWeather(org.json.JSONObject request)throws Exception{
   org.json.JSONObject snapshot=SnapshotStore.read(this,"weather");
@@ -337,6 +378,7 @@ public final class MonitorService extends Service {
   }
  }
  private org.json.JSONObject queryHealth(org.json.JSONObject request)throws Exception{
+  if("stress_writeback".equals(request.optString("action"))||"health_writeback".equals(request.optString("action")))throw new IllegalArgumentException("仅可在健康明细中写回");
   if("screen_usage".equals(request.optString("action")))return UsageCollector.collectToday(this);
   if("sync_database".equals(request.optString("action")))return requestDatabaseSync(this);
   if(HealthDatabaseStore.available(this))return HealthDatabaseStore.query(this,request);
@@ -365,18 +407,19 @@ public final class MonitorService extends Service {
   boot=bootCount();restore(SystemClock.elapsedRealtime(),System.currentTimeMillis(),on(),unlocked());
   IntentFilter f=new IntentFilter();f.addAction(Intent.ACTION_SCREEN_OFF);f.addAction(Intent.ACTION_SCREEN_ON);f.addAction(Intent.ACTION_USER_PRESENT);
   if(Build.VERSION.SDK_INT>=33)registerReceiver(screen,f,Context.RECEIVER_NOT_EXPORTED);else registerReceiver(screen,f);
-  h.post(tick);
+  scheduleSample();
  }
  @Override public int onStartCommand(Intent i,int flags,int id){
   if(i!=null&&WeatherAlarm.ACTION.equals(i.getAction())){WeatherAlarm.schedule(this);refreshWeatherCloud();}
   else if(i!=null&&ACTION_RELOAD_LINK.equals(i.getAction()))reloadLink();
   else if(i!=null&&ACTION_REFRESH.equals(i.getAction()))updateNotification();
   else if(link==null)startLink();
+  scheduleSample();
   return START_STICKY;
  }
  @Override public void onDestroy(){
   h.removeCallbacksAndMessages(null);unregisterReceiver(screen);serviceRunning=false;if(instance==this)instance=null;
-  if(mcp!=null){mcp.stop();mcp=null;}
+  stopMcp();
   if(link!=null){link.stop();link=null;}
   if(!p.getBoolean("enabled",false)){state.restart();p.edit().putString("state",state.encode()).remove("boot").remove("last_elapsed").remove("last_wall").commit();}
   ScheduledExecutorService schedule=bandSchedule;bandSchedule=null;if(schedule!=null)schedule.shutdownNow();

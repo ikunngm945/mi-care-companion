@@ -245,7 +245,7 @@ public final class BandFileImporter {
 
     String sourceScope() throws Exception { return scope(accountDirectory()); }
 
-    private static String scope(File path) throws Exception {
+    static String scope(File path) throws Exception {
         return hex(MessageDigest.getInstance("SHA-256").digest(
                 (path.getParentFile().getName()+"|"+path.getName()).getBytes(StandardCharsets.UTF_8)));
     }

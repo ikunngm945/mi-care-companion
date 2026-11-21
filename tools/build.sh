@@ -7,9 +7,23 @@ for dep in android.jar resources-api34.jar r8.jar xposed-api.jar shizuku-api.jar
 B="$(mktemp -d "$ROOT/build/apk.XXXXXX")"
 mkdir -p dist signing
 
+artifact_names=()
+manifest_version() {
+  local line
+  while IFS= read -r line; do
+    if [[ "$line" =~ android:versionName=\"([0-9]+\.[0-9]+\.[0-9]+)\" ]]; then
+      printf '%s\n' "${BASH_REMATCH[1]}"
+      return
+    fi
+  done < "$1"
+  printf 'Missing numeric versionName in %s\n' "$1" >&2
+  return 1
+}
+
 build() {
   local name="$1" manifest="$2" resdir="$3" assets="$4"; shift 4
-  local work="$B/$name"
+  local work="$B/$name" version
+  version="$(manifest_version "$manifest")"
   mkdir -p "$work/classes" "$work/dex"
   javac --release 8 -encoding UTF-8 -cp "tools/deps/android.jar:tools/deps/xposed-api.jar:tools/deps/shizuku-api.jar:tools/deps/shizuku-aidl.jar" -d "$work/classes" "$@"
   (cd "$work/classes" && unzip -oq "$ROOT/tools/deps/shizuku-api.jar" && unzip -oq "$ROOT/tools/deps/shizuku-provider.jar" && unzip -oq "$ROOT/tools/deps/shizuku-aidl.jar")
@@ -25,8 +39,9 @@ build() {
   apksigner sign --ks signing/local.p12 --ks-pass pass:changeit --key-pass pass:changeit \
     --ks-key-alias local --out "dist/$name.apk" "$work/aligned.apk"
   apksigner verify "dist/$name.apk"
-  cp "dist/$name.apk" "dist/$name-0.8.0.apk"
-  printf 'Built dist/%s.apk\n' "$name"
+  cp "dist/$name.apk" "dist/$name-$version.apk"
+  artifact_names+=("$name-$version.apk")
+  printf 'Built dist/%s-%s.apk\n' "$name" "$version"
 }
 
 if ! test -f signing/local.p12; then
@@ -39,9 +54,12 @@ WEATHER=(android/src/cn/local/micompanion/*.java android/hook-common/cn/local/mi
 HEALTH=(android/src/cn/local/micompanion/*.java android/hook-common/cn/local/micompanion/hook/*.java android/module-health/cn/local/micompanion/health/*.java)
 
 build mi-companion android/AndroidManifest.xml android/res android/assets "${APP[@]}"
-build mi-companion-weather android/module-weather/AndroidManifest.xml android/module-weather/res android/module-weather/assets "${WEATHER[@]}"
-build mi-companion-health android/module-health/AndroidManifest.xml android/module-health/res android/module-health/assets "${HEALTH[@]}"
+if [[ "${1:-}" != "--app-only" ]]; then
+  build mi-companion-weather android/module-weather/AndroidManifest.xml android/module-weather/res android/module-weather/assets "${WEATHER[@]}"
+  build mi-companion-health android/module-health/AndroidManifest.xml android/module-health/res android/module-health/assets "${HEALTH[@]}"
+fi
 
-(cd dist && sha256sum mi-companion-0.8.0.apk mi-companion-weather-0.8.0.apk mi-companion-health-0.8.0.apk > SHA256SUMS-0.8.0.txt)
-cat dist/SHA256SUMS-0.8.0.txt
+release="$(manifest_version android/AndroidManifest.xml)"
+(cd dist && sha256sum "${artifact_names[@]}" > "SHA256SUMS-$release.txt")
+cat "dist/SHA256SUMS-$release.txt"
 printf 'Build artifacts: %s\n' "$B"

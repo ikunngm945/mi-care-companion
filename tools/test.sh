@@ -24,4 +24,5 @@ if test -x build/test-venv/bin/python; then
 else
  python3.12 -m unittest discover -s tests -v
 fi
+python3.12 -m unittest discover -s android/module-health/tests -v
 python3.12 -m py_compile astrbot_plugin_mi_companion/core.py astrbot_plugin_mi_companion/server.py astrbot_plugin_mi_companion/main.py

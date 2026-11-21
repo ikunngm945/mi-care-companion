@@ -1,1 +1,18 @@
-<inset xmlns:android="http://schemas.android.com/apk/res/android" android:insetLeft="16.6667%" android:insetTop="16.6667%" android:insetRight="16.6667%" android:insetBottom="16.6667%"><bitmap android:src="@drawable/ic_companion_art" android:gravity="fill" android:filter="true"/></inset>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Keep the sun and heart within the centered 66 dp safe circle. -->
+    <path
+        android:fillColor="#F2FFFA"
+        android:pathData="M49,81 L32,64 C25,57 30,49 37,49 C42,49 46,52 49,56 C52,52 56,50 61,50 C68,50 73,57 66,64 Z" />
+    <path
+        android:fillColor="#FFD166"
+        android:pathData="M66,31.5 A5.5,5.5 0,1 1,66,42.5 A5.5,5.5 0,1 1,66,31.5 Z" />
+    <path
+        android:strokeColor="#FFD166"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:pathData="M66,26.5 V28.5 M66,45.5 V47.5 M55.5,37 H57.5 M74.5,37 H76.5 M58.6,29.6 L60,31 M72,43 L73.4,44.4 M58.6,44.4 L60,43 M72,31 L73.4,29.6" />
+</vector>

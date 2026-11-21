@@ -30,6 +30,57 @@ final class BandSync {
         }
     }
 
+    static final class DeviceStatus {
+        final Integer batteryPercent;
+        final long[] storage; // [used, total], in bytes
+
+        DeviceStatus(Integer batteryPercent, long[] storage) {
+            this.batteryPercent = batteryPercent;
+            this.storage = storage;
+        }
+    }
+
+    /** Shares the sync lock so these reads never compete for our own SPP connection. */
+    static synchronized DeviceStatus readDeviceStatus(Context context) throws InterruptedException {
+        BandConfig config = BandConfig.load(context);
+        if (config == null) throw new IllegalStateException("尚未配置手环直连");
+        CountDownLatch storageDone = new CountDownLatch(1);
+        CountDownLatch batteryDone = new CountDownLatch(1);
+        AtomicReference<long[]> storage = new AtomicReference<>();
+        AtomicReference<Integer> battery = new AtomicReference<>();
+        BandSppClient client = new BandSppClient(context, config, new BandSppClient.Listener() {
+            @Override public void onState(String state) { }
+            @Override public void onReady() { }
+            @Override public void onFileIds(int subtype, List<byte[]> ids) { }
+            @Override public void onFile(byte[] file) { }
+            @Override public void onStorage(long[] result) {
+                if (result != null) storage.compareAndSet(null, result);
+                storageDone.countDown();
+            }
+            @Override public void onBattery(Integer percent) {
+                if (percent != null) battery.compareAndSet(null, percent);
+                batteryDone.countDown();
+            }
+            @Override public void onError(String reason) {
+                storageDone.countDown();
+                batteryDone.countDown();
+            }
+        }, true);
+        try {
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+            client.connect();
+            if (storageDone.await(deadline - System.nanoTime(), TimeUnit.NANOSECONDS)) {
+                // A silent battery command must not delay a storage result for the full timeout.
+                long remaining = deadline - System.nanoTime();
+                if (storage.get() != null) remaining = Math.min(remaining, TimeUnit.SECONDS.toNanos(2));
+                batteryDone.await(remaining, TimeUnit.NANOSECONDS);
+            }
+            return new DeviceStatus(battery.get(), storage.get());
+        } finally {
+            client.close();
+        }
+    }
+
     private static JSONObject syncOnce(Context context, BandConfig config) throws Exception {
         final JSONObject result = new JSONObject();
         final JSONArray files = new JSONArray();
