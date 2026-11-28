@@ -1,12 +1,15 @@
 package cn.local.micompanion;
 
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.InputStreamReader;
 import java.util.Locale;
+import java.util.Map;
+import java.util.concurrent.locks.ReentrantLock;
 import org.json.JSONObject;
 
 /** Reads the already-paired band identity and auth key from Mi Fitness' local device database. */
@@ -15,6 +18,7 @@ final class BandConfig {
     static final String KEY_MAC = "mac";
     static final String KEY_AUTH = "auth_key";
     static final String KEY_MODEL = "model";
+    private static final ReentrantLock CACHE_PUBLICATION = new ReentrantLock();
     final String mac;
     final String authKey;
     final String model;
@@ -41,19 +45,49 @@ final class BandConfig {
 
     static BandConfig save(Context context, BandConfig config) {
         if (config == null) return null;
-        context.getSharedPreferences(PREFS, 0).edit()
+        SharedPreferences.Editor editor = context.getSharedPreferences(PREFS, 0).edit()
                 .putString(KEY_MAC, config.mac).putString(KEY_AUTH, config.authKey)
-                .putString(KEY_MODEL, config.model).putString("source_scope", config.sourceScope).commit();
+                .putString(KEY_MODEL, config.model).putString("source_scope", config.sourceScope);
+        publishCachedPreferences(editor, true);
         return config;
     }
 
+    static void publishCachedPreferences(SharedPreferences.Editor editor, boolean synchronous) {
+        CACHE_PUBLICATION.lock();
+        try {
+            if (synchronous) editor.commit();
+            else editor.apply();
+        } finally {
+            CACHE_PUBLICATION.unlock();
+        }
+    }
+
+    /** Keep a UI action's cache recheck and use together without making it wait for a writer. */
+    static boolean tryWithCachedPairing(Runnable action) {
+        if (!CACHE_PUBLICATION.tryLock()) return false;
+        try {
+            action.run();
+            return true;
+        } finally {
+            CACHE_PUBLICATION.unlock();
+        }
+    }
+
     static BandConfig load(Context context) {
-        String mac = context.getSharedPreferences(PREFS, 0).getString(KEY_MAC, "");
-        String key = context.getSharedPreferences(PREFS, 0).getString(KEY_AUTH, "");
-        String model = context.getSharedPreferences(PREFS, 0).getString(KEY_MODEL, "");
-        if (!mac.isEmpty() && !key.isEmpty()) return new BandConfig(mac, key, model,
-                context.getSharedPreferences(PREFS, 0).getString("source_scope", ""));
-        return null;
+        // Read one snapshot: a concurrent sync can replace the MAC and key together.
+        return fromCachedPreferences(context.getSharedPreferences(PREFS, 0).getAll());
+    }
+
+    static BandConfig fromCachedPreferences(Map<String, ?> values) {
+        String mac = cachedString(values, KEY_MAC);
+        String key = cachedString(values, KEY_AUTH);
+        if (mac.isEmpty() || key.isEmpty()) return null;
+        return new BandConfig(mac, key, cachedString(values, KEY_MODEL), cachedString(values, "source_scope"));
+    }
+
+    private static String cachedString(Map<String, ?> values, String field) {
+        Object value = values.get(field);
+        return value instanceof String ? (String) value : "";
     }
 
     /** Provisioning is explicit: it needs root once because Mi Fitness keeps its database private. */
@@ -91,10 +125,11 @@ final class BandConfig {
                             String model = object.optString("model", "").trim();
                             if (mac.matches("[0-9A-F]{2}(:[0-9A-F]{2}){5}") && key.matches("[0-9a-fA-F]{32}")) {
                                 BandConfig config = new BandConfig(mac, key.toLowerCase(Locale.US), model);
-                                context.getSharedPreferences(PREFS, 0).edit()
+                                SharedPreferences.Editor editor = context.getSharedPreferences(PREFS, 0).edit()
                                         .putString(KEY_MAC, config.mac)
                                         .putString(KEY_AUTH, config.authKey)
-                                        .putString(KEY_MODEL, config.model).remove("source_scope").apply();
+                                        .putString(KEY_MODEL, config.model).remove("source_scope");
+                                publishCachedPreferences(editor, false);
                                 return config;
                             }
                         } catch (Exception ignored) { }

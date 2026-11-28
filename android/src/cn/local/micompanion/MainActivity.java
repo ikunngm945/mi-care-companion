@@ -7,6 +7,7 @@ import android.app.NotificationManager;
 import android.content.SharedPreferences;
 import android.content.res.ColorStateList;
 import android.content.ClipData;
+import android.content.ClipDescription;
 import android.content.ClipboardManager;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -21,6 +22,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PersistableBundle;
 import android.os.PowerManager;
 import android.provider.Settings;
 import android.text.InputType;
@@ -45,6 +47,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.Consumer;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -77,6 +80,13 @@ public final class MainActivity extends Activity {
     private final TextView[] metricValues = new TextView[4];
     private ProgressBar batteryProgress, storageProgress;
     private Button readDevice, syncDevice;
+    private final BandIdentityState bandIdentity = new BandIdentityState();
+    private TextView bandMac, bandAuth, bandIdentityFeedback;
+    private Button copyBandMac, showBandAuth, copyBandAuth;
+    private SharedPreferences bandPreferences;
+    private final SharedPreferences.OnSharedPreferenceChangeListener bandPreferenceListener = (prefs, key) -> {
+        if (prefs == bandPreferences && activePage == DEVICE) refreshBandIdentity();
+    };
     private boolean healthLoading, healthRefreshPending;
     private long latestDirectSync;
 
@@ -452,7 +462,9 @@ public final class MainActivity extends Activity {
     private void showPage(int page) {
         if (page == activePage) return;
         if (activePage >= 0) pages[activePage].setVisibility(View.GONE);
+        if (activePage == DEVICE) resetBandIdentity();
         activePage = page;
+        if (page == DEVICE) refreshBandIdentity();
         pages[page].setVisibility(View.VISIBLE);
         for (int i = 0; i < tabs.length; i++) {
             boolean selected = i == page;
@@ -607,6 +619,92 @@ public final class MainActivity extends Activity {
         syncFeedback = label(sync, "", 14, MUTED, false);
         syncFeedback.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
         label(sync, "自动同步间隔为 10 分钟。手环通道忙时可能切换到运动健康同步。", 13, MUTED, false);
+        buildBandIdentity(body);
+    }
+
+    private void buildBandIdentity(LinearLayout body) {
+        LinearLayout pairing = card(body);
+        label(pairing, "本机配对信息", 16, INK, true).setAccessibilityHeading(true);
+        label(pairing, "仅显示助手已保存的手环配对信息。AuthKey 是配对密钥，请勿分享。", 13, MUTED, false);
+        label(pairing, "MAC 地址", 14, MUTED, true);
+        bandMac = label(pairing, UNREAD, 16, INK, false);
+        bandMac.setTypeface(Typeface.MONOSPACE);
+        copyBandMac = addButton(pairing, "复制 MAC 地址", false, v -> copyBandIdentity(false));
+        label(pairing, "AuthKey", 14, MUTED, true);
+        bandAuth = label(pairing, UNREAD, 16, INK, false);
+        bandAuth.setTypeface(Typeface.MONOSPACE);
+        bandAuth.setSaveEnabled(false);
+        bandAuth.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
+        if (Build.VERSION.SDK_INT >= 29) bandAuth.setImportantForContentCapture(View.IMPORTANT_FOR_CONTENT_CAPTURE_NO);
+        showBandAuth = addButton(pairing, "显示 AuthKey", false, v -> withConfirmedBandIdentity(current -> {
+            bandIdentity.toggleAuthKey();
+            renderBandIdentity();
+        }));
+        copyBandAuth = addButton(pairing, "复制 AuthKey", false, v -> copyBandIdentity(true));
+        bandIdentityFeedback = label(pairing, "", 13, MUTED, false);
+        bandIdentityFeedback.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        renderBandIdentity();
+    }
+
+    private boolean refreshBandIdentity() {
+        if (!bandIdentity.update(BandConfig.load(this))) return false;
+        renderBandIdentity();
+        bandIdentityFeedback.setText("");
+        return true;
+    }
+
+    private void resetBandIdentity() {
+        bandIdentity.update(null);
+        renderBandIdentity();
+        bandIdentityFeedback.setText("");
+    }
+
+    private void renderBandIdentity() {
+        BandConfig pairing = bandIdentity.current();
+        boolean available = pairing != null;
+        bandMac.setText(available ? pairing.mac : UNREAD);
+        bandAuth.setText(bandIdentity.authKeyText(UNREAD));
+        showBandAuth.setText(bandIdentity.isAuthKeyVisible() ? "隐藏 AuthKey" : "显示 AuthKey");
+        copyBandMac.setEnabled(available);
+        showBandAuth.setEnabled(available);
+        copyBandAuth.setEnabled(available);
+    }
+
+    private void withConfirmedBandIdentity(Consumer<BandConfig> action) {
+        if (activePage != DEVICE) return;
+        boolean acquired = BandConfig.tryWithCachedPairing(() -> {
+            // A worker may have published a replacement before its preferences callback reaches the UI.
+            if (refreshBandIdentity()) {
+                bandIdentityFeedback.setText("配对信息已变更，请确认后重试。");
+                return;
+            }
+            BandConfig pairing = bandIdentity.current();
+            if (pairing != null) action.accept(pairing);
+        });
+        if (!acquired) bandIdentityFeedback.setText("正在更新配对信息，请稍后重试。");
+    }
+
+    private void copyBandIdentity(boolean auth) {
+        withConfirmedBandIdentity(pairing -> copyConfirmedBandIdentity(pairing, auth));
+    }
+
+    private void copyConfirmedBandIdentity(BandConfig pairing, boolean auth) {
+        String name = auth ? "AuthKey" : "MAC 地址";
+        ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+        if (clipboard == null) {
+            bandIdentityFeedback.setText("剪贴板不可用，未复制。");
+            return;
+        }
+        ClipData clip = ClipData.newPlainText(name, auth ? pairing.authKey : pairing.mac);
+        PersistableBundle metadata = new PersistableBundle();
+        metadata.putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true);
+        clip.getDescription().setExtras(metadata);
+        try {
+            clipboard.setPrimaryClip(clip);
+            bandIdentityFeedback.setText(name + "已复制。");
+        } catch (RuntimeException ignored) {
+            bandIdentityFeedback.setText("无法写入剪贴板，未复制。");
+        }
     }
 
     private void readDeviceStatus() {
@@ -1166,11 +1264,20 @@ public final class MainActivity extends Activity {
     }
     @Override protected void onResume() {
         super.onResume();
+        bandPreferences = getSharedPreferences(BandConfig.PREFS, MODE_PRIVATE);
+        bandPreferences.registerOnSharedPreferenceChangeListener(bandPreferenceListener);
+        if (activePage == DEVICE) refreshBandIdentity();
         ensureServiceOnLaunch();
         if (activePage == HOME) refreshHealth();
         refresh(); linkHandler.removeCallbacks(linkPoll); linkHandler.post(linkPoll);
     }
-    @Override protected void onPause() { linkHandler.removeCallbacks(linkPoll); super.onPause(); }
+    @Override protected void onPause() {
+        bandPreferences.unregisterOnSharedPreferenceChangeListener(bandPreferenceListener);
+        bandPreferences = null;
+        if (activePage == DEVICE) resetBandIdentity();
+        linkHandler.removeCallbacks(linkPoll);
+        super.onPause();
+    }
     @Override protected void onDestroy() {
         ShizukuShell.unlisten();
         linkHandler.removeCallbacks(linkPoll);
